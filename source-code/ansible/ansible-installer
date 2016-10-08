@@ -1,0 +1,177 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+echo "Start installation" > /tmp/date-check
+date >> /tmp/date-check
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f ../variables ]; then
+   echo
+   echo " +-----------------------------------------+"
+   echo " |  variables file not in this directory   |"
+   echo " +-----------------------------------------+"
+   echo
+   exit
+fi
+source ../variables
+
+clear
+echo
+echo "+------------------------------------------+"
+echo "| Install Ansible                          |"
+echo "+------------------------------------------+"
+if [ x$OSFLAVOR == xxxxxxCentOS ]; then
+   wget -nv http://$FILESERVER/$HTTPFILES/ansible/ansible-2.1.0.0.rpm > /dev/null 2>&1
+fi
+
+FILE=/etc/yum.repos.d/hopper-repo.repo
+yum-config-manager --disable base > /dev/null 2>&1
+yum-config-manager --disable extras > /dev/null 2>&1
+yum-config-manager --disable updates > /dev/null 2>&1
+echo "[hopper-repo]" > $FILE
+echo "name=Hopper-Stack $VERSION" >> $FILE
+echo "baseurl=http://$FILESERVER/$OSFLAVOR/7/0" >> $FILE
+echo "gpgcheck=0" >> $FILE
+echo "enabled=1" >> $FILE
+
+yum install -y ansible > /dev/null 2>&1
+
+echo "[defaults]" > ansible.cfg
+echo "forks          = 100" >> ansible.cfg
+echo "log_path=/var/log/orchestrate.log" >> ansible.cfg
+
+# +------------------------------------------+
+# | Create repository file                   |
+# +------------------------------------------+
+echo "[hopper-repo]" > hopper-repo.repo
+echo "name=Hopper-Stack $VERSION" >> hopper-repo.repo
+echo "baseurl=http://$FILESERVER/$OSFLAVOR/7/0" >> hopper-repo.repo
+echo "gpgcheck=0" >> hopper-repo.repo
+echo "enabled=1" >> hopper-repo.repo
+
+echo
+echo "+------------------------------------------+"
+echo "| Create configuration files               |"
+echo "+------------------------------------------+"
+echo "[default]" > hosts
+echo "localhost" >> hosts
+ansible-playbook -i hosts create-files.yml
+rm -rf hosts
+
+# +------------------------------------------+
+# | Distribute files                         |
+# +------------------------------------------+
+cd ..
+./distribute-files
+
+# +------------------------------------------+
+# | Hosts files                              |
+# +------------------------------------------+
+cd ansible
+echo "[controller1]" >> hosts
+echo "$CONTRL1IP" >> hosts
+echo >> hosts
+
+echo "[controller2]" >> hosts
+echo "$CONTRL2IP" >> hosts
+echo >> hosts
+
+echo "[controller3]" >> hosts
+echo "$CONTRL3IP" >> hosts
+echo >> hosts
+
+echo "[haproxy]" >> hosts
+echo "$HAPROXY1IP" >> hosts
+echo "$HAPROXY2IP" >> hosts
+echo >> hosts
+
+echo "[storage1]" >> hosts
+cat ../variables | grep ^STORAGE1IP | cut -f2 -d= >> hosts
+echo >> hosts
+
+echo "[all-hosts]" > /tmp/all-hosts.txt
+cat ../variables | grep ^CONTRL[0-9]IP | cut -f2 -d= >> /tmp/all-hosts.txt
+cat ../variables | grep ^HAPROXY[0-9]IP | cut -f2 -d= >> /tmp/all-hosts.txt
+cat ../variables | grep ^NETWORK[0-9]IP | cut -f2 -d= >> /tmp/all-hosts.txt
+cat ../variables | grep ^STORAGE[0-9]IP | cut -f2 -d= >> /tmp/all-hosts.txt
+cat ../variables | grep ^COMPUTE[0-9]IP | cut -f2 -d= >> /tmp/all-hosts.txt
+
+if [ x$ENABLE_AMANDA != xFalse ]; then
+   echo "$BCKUPSERVER" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   echo "$NAGIOSSERVER" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_NAGIOS_LM == xTrue ]; then
+   echo "$NAGIOSLOGMGR" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_DNS == xTrue ]; then
+   echo "$DNSSERVERIP" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_LDAP == xTrue ]; then
+   echo "$LDAPSERVERIP" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_SQUID == xTrue ]; then
+   echo "$SQUIDDSERVERIP" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   echo "$LOGSTASHIP" >> /tmp/all-hosts.txt
+fi
+if [ x$ENABLE_NTP == xTrue ]; then
+   echo "$NTPSERVER" >> /tmp/all-hosts.txt
+fi
+
+echo >> hosts
+cat /tmp/all-hosts.txt | sort -ru >> hosts
+
+echo "+------------------------------------------+"
+echo "| Orchestrate Stack                        |"
+echo "+------------------------------------------+"
+ansible-playbook -i hosts patch-all.yml --private-key ../ssh-key 
+ansible-playbook -i hosts reboot-all.yml --private-key ../ssh-key 
+ansible-playbook -i hosts orchestrate.yml --private-key ../ssh-key
+ansible-playbook -i hosts reboot-controller1.yml --private-key ../ssh-key
+ansible-playbook -i hosts reboot-controller2.yml --private-key ../ssh-key
+ansible-playbook -i hosts reboot-controller3.yml --private-key ../ssh-key
+sleep 120
+ansible-playbook -i hosts upload-image.yml --private-key ../ssh-key
+
+rm -f hopper-repo.repo
+rm -f /tmp/all-hosts.txt
+rm -f ansible.cfg
+rm -f hosts
+
+echo "End installation" >> /tmp/date-check
+date >> /tmp/date-check
+
+wget -nv wget -nv http://$FILESERVER/$OSFLAVOR/7/0/epel/f/figlet-2.2.5-9.el7.x86_64.rpm > /dev/null 2>&1
+rpm -ivh figlet-2.2.5-9.el7.x86_64.rpm > /dev/null 2>&1
+clear
+tput setaf 2
+echo
+echo
+figlet "    Hopper~Stack"
+echo
+tput setaf 2
+tput setaf 7
+echo
+

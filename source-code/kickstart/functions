@@ -1,0 +1,445 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+OSVER=centos7
+CURDIR=`pwd`
+source ../variables
+rm -rf /var/pxe/centos7/ks-*
+
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# +------------------------------------------------------------------+
+# | FUNCTIONS                                                        |
+# +------------------------------------------------------------------+
+ksconfigcreate () {
+   FILE=/var/pxe/$OSVER/$KSCONFIG
+
+   echo "# General details" > $FILE
+   echo "lang en_US.UTF-8" >> $FILE
+   echo "text" >> $FILE
+   echo "keyboard $KSKEYBOARD" >> $FILE
+   echo >> $FILE
+   echo "auth --enableshadow --passalgo=sha512" >> $FILE
+   echo "rootpw --plaintext $CLIENTPASS" >> $FILE
+   echo "firewall --service=ssh" >> $FILE
+   echo "url --url="http://$KSSERVER/kickstart"" >> $FILE
+   echo "firstboot --enable" >> $FILE
+   echo "timezone $KSTIMEZONE --isUtc --ntpservers=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "eula --agreed" >> $FILE
+   echo "reboot" >> $FILE
+   echo >> $FILE
+
+   echo "# System services" >> $FILE
+   echo "services --enabled=NetworkManager,sshd,chronyd" >> $FILE
+   echo >> $FILE
+
+   echo "# System bootloader configuration" >> $FILE
+   echo "bootloader --location=mbr --boot-drive=$CLIENTBOOTDISK" >> $FILE
+   echo "zerombr" >> $FILE
+   echo >> $FILE
+
+   echo "# Network information" >> $FILE
+   echo "network --onboot yes --device $CLIENTIFACE --bootproto=static --ip=$CLIENTIP --netmask=$KSNETMASK --gateway=$KSGATEWAY --nameserver=$KSDNS1 --hostname=$CLIENTHN" >> $FILE
+   echo >> $FILE
+
+   echo "# Partitioning" >> $FILE
+   echo "clearpart --all --initlabel" >> $FILE
+   echo >> $FILE
+
+   echo "part swap --asprimary --fstype=swap --size=2048 --ondisk=$CLIENTBOOTDISK" >> $FILE
+   echo "part /boot --fstype xfs --size=200 --ondisk=$CLIENTBOOTDISK" >> $FILE
+   echo "part pv.01 --size=1 --grow --ondisk=$CLIENTBOOTDISK" >> $FILE
+   echo >> $FILE
+
+   echo "volgroup rootvg01 pv.01" >> $FILE
+   echo "logvol / --fstype xfs --name=root.fs --vgname=rootvg01 --size=1 --grow" >> $FILE
+   echo "logvol /var --fstype xfs --name=var.fs --vgname=rootvg01 --size=8192" >> $FILE
+   echo >> $FILE
+
+   echo "# Selinux State" >> $FILE
+   echo "selinux --disabled" >> $FILE
+   echo >> $FILE
+
+   echo "# Packages" >> $FILE
+   echo "%packages" >> $FILE
+   # echo "@base" >> $FILE
+   # echo "@core" >> $FILE
+   echo "@^Infrastructure Server" >> $FILE
+   echo "%end" >> $FILE
+   echo >> $FILE
+
+}
+
+ksaddnetwork () {
+   FILE=/var/pxe/$OSVER/$KSCONFIG
+   echo "# Network information 2" >> $FILE
+   echo "network --onboot yes --device $CLIENTADDIFACE --bootproto=static --ip=$CLIENTADDIP --netmask=$KSNETMASK" >> $FILE
+   echo >> $FILE
+}
+
+ksaddlvm () {
+   FILE=/var/pxe/$OSVER/$KSCONFIG
+   echo "part pv.02 --size=1 --grow --ondisk=$CLIENTADDDISK" >> $FILE
+   echo "volgroup vg02 pv.02" >> $FILE
+   echo "logvol $KSADDMNTPNT --fstype xfs --name=$KSADDFS --vgname=vg02 --size=1 --grow" >> $FILE
+   echo >> $FILE
+}
+
+
+# +------------------------------------------------------------------+
+# | BUILD SYSTEM                                                     |
+# +------------------------------------------------------------------+
+ksbuildsystem () {
+
+yum update -y
+echo "reboot required"
+
+# +------------------------------------------------------------------+
+# | INSTALL PXE SERVICES                                             |
+# +------------------------------------------------------------------+
+yum install dnsmasq -y
+yum install syslinux -y
+yum install tftp-server -y
+yum install httpd -y
+
+# +------------------------------------------------------------------+
+# | UNPACK ISO DISTRIBUTION                                          |
+# +------------------------------------------------------------------+
+if [ x$OSFLAVOR == xCentOS ]; then
+   if [ ! -d /kickstart ]; then
+
+      mkdir -p /kickstart
+      cd /var/www/html
+      ln -s /kickstart kickstart
+      cd /kickstart
+
+      mkdir iso
+      cd iso
+      wget http://$FILESERVER/$HTTPFILES/kickstart/CentOS7.iso
+
+      rm -rf /tmp/rrb
+      mkdir /tmp/rrb
+      ISOFILE=`ls -d CentOS*.iso`
+      mount -t iso9660 -o ro $ISOFILE /tmp/rrb
+
+      cd /tmp/rrb
+      echo " Copying DVD"
+      find . -depth -print | cpio -pdm /kickstart
+      cd /kickstart
+      umount /tmp/rrb
+
+      rm -rf /tmp/rrb
+      rm -rf /kickstart/iso
+
+      cp images/pxeboot/vmlinuz .
+      cp images/pxeboot/initrd.img .
+
+   fi
+fi
+
+systemctl enable httpd
+systemctl restart httpd
+
+# +------------------------------------------------------------------+
+# | CONFIGURE PXE SERVER                                             |
+# +------------------------------------------------------------------+
+mv /etc/dnsmasq.conf  /etc/dnsmasq.conf.backup
+
+echo "interface=$KSIFACE,lo" > /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo #bind-interfaces" >> /etc/dnsmasq.conf
+echo "domain=$KSDOMAIN" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# DHCP range-leases" >> /etc/dnsmasq.conf
+echo "dhcp-range=$KSIFACE,$KSSTRTRNG,$KSENDRNG,$KSNETMASK,1h" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# PXE" >> /etc/dnsmasq.conf
+echo "dhcp-boot=pxelinux.0,pxeserver,$KSSERVER" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# Gateway" >> /etc/dnsmasq.conf
+echo "dhcp-option=3,$KSGATEWAY" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# DNS" >> /etc/dnsmasq.conf
+echo "dhcp-option=6,$KSDNS1" >> /etc/dnsmasq.conf
+echo "server=$KSDNS2" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# Broadcast Address" >> /etc/dnsmasq.conf
+echo "dhcp-option=28,$KSBCAST" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "# NTP Server" >> /etc/dnsmasq.conf
+echo "dhcp-option=42,$NTPSERVER" >> /etc/dnsmasq.conf
+echo "" >> /etc/dnsmasq.conf
+
+echo "pxe-prompt="Press F8 for menu.", 1" >> /etc/dnsmasq.conf
+echo "pxe-service=x86PC, "Install OS from network server", pxelinux" >> /etc/dnsmasq.conf
+echo "enable-tftp" >> /etc/dnsmasq.conf
+echo "tftp-root=/var/lib/tftpboot" >> /etc/dnsmasq.conf
+
+# +------------------------------------------------------------------+
+# | UPDATE TFTP                                                      |
+# +------------------------------------------------------------------+
+cp -r /usr/share/syslinux/* /var/lib/tftpboot
+
+# +------------------------------------------------------------------+
+# | SETUP PXE                                                        |
+# +------------------------------------------------------------------+
+mkdir -p /var/pxe/$OSVER
+mkdir -p /var/lib/tftpboot/$OSVER
+
+cd /var/lib/tftpboot/$OSVER
+wget http://$KSSERVER/$KSFILES/vmlinuz
+wget http://$KSSERVER/$KSFILES/initrd.img
+
+cp /usr/share/syslinux/menu.c32 /var/lib/tftpboot/
+
+mkdir -p /var/lib/tftpboot/pxelinux.cfg
+rm -f /var/lib/tftpboot/pxelinux.cfg/default
+touch /var/lib/tftpboot/pxelinux.cfg/default
+
+# +------------------------------------------------------------------+
+# | UPDATE SERVICES                                                  |
+# +------------------------------------------------------------------+
+FILE=/etc/httpd/conf.d/pxeboot.conf
+echo "Alias /$OSVER /var/pxe/$OSVER" > $FILE
+echo "<Directory /var/pxe/$OSVER>" >> $FILE
+echo "    Options Indexes FollowSymLinks" >> $FILE
+echo "    # IP address you allow to access" >> $FILE
+echo "" >> $FILE
+echo "    Require ip 127.0.0.1 $KSSUBNET/24" >> $FILE
+echo "</Directory> " >> $FILE
+
+# +------------------------------------------------------------------+
+# | PXE SERVER CONFIGURATION                                         |
+# +------------------------------------------------------------------+
+FILE=/var/lib/tftpboot/pxelinux.cfg/default
+cp $CURDIR/pxeboot.png /var/lib/tftpboot
+
+echo "DEFAULT vesamenu.c32" > $FILE
+echo "MENU background pxeboot.png" >> $FILE
+echo "MENU color border 0 #ffffffff #00000000 std" >> $FILE
+echo "MENU color sel 0 #ffffffff #ff000000 std" >> $FILE
+echo "menu color tabmsg       31;40      #90ffff00 #00000000 std" >> $FILE
+echo "menu color title        31;40      #90ffff00 #00000000 std" >> $FILE
+echo "prompt 0" >> $FILE
+echo "timeout 300" >> $FILE
+echo "ontimeout local" >> $FILE
+
+
+echo "" >> $FILE
+echo "menu title M A V E R I C K" >> $FILE
+
+echo "label 1" >> $FILE
+echo "   menu label Boot Local Disk" >> $FILE
+echo "   LOCALBOOT 0 " >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE
+
+echo "label 2" >> $FILE
+echo "   menu label Build HAProxy #1" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-haproxy1.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 3" >> $FILE
+echo "   menu label Build HAProxy #2" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-haproxy2.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE 
+
+echo "label 4" >> $FILE
+echo "   menu label Build Controller #1" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-controller1.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 5" >> $FILE
+echo "   menu label Build Controller #2" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-controller2.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 6" >> $FILE
+echo "   menu label Build Controller #3" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-controller3.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE 
+
+echo "label 7" >> $FILE
+echo "   menu label Build Network #1" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-network1.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 8" >> $FILE
+echo "   menu label Build Network #2" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-network2.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 9" >> $FILE
+echo "   menu label Build Network #3" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-network3.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE 
+
+echo "label 10" >> $FILE
+echo "   menu label Build Storage #1" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-storage1.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 11" >> $FILE
+echo "   menu label Build Storage #2" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-storage2.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "label 12" >> $FILE
+echo "   menu label Build Storage #3" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-storage3.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE 
+
+nocomp=`cat $CURDIR/../variables | grep ^COMPUTE[0-9]HN | wc -l`
+let total=nocomp+1
+labelval=13
+count=1
+
+while [ $count -lt $total ]; do
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build Compute #$count" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-compute$count.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+   let labelval=labelval+1
+   let count=count+1
+done
+
+echo "menu separator" >> $FILE 
+
+if [ x$ENABLE_NTP == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build NTP Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-ntp.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build Amanda Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-amanda.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build Nagios Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-nagios.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+if [ x$ENABLE_DNS == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build DNS Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-dns.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+if [ x$ENABLE_SQUID == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build Squid Proxy Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-squid.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   let labelval=labelval+1
+   echo "label $labelval" >> $FILE
+   echo "   menu label Build Log Management Server" >> $FILE
+   echo "   kernel $OSVER/vmlinuz" >> $FILE
+   echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-logstash.cfg devfs=nomount" >> $FILE
+   echo "" >> $FILE
+fi
+
+let labelval=labelval+1
+echo "label $labelval" >> $FILE
+echo "   menu label Build Yum Repository" >> $FILE
+echo "   kernel $OSVER/vmlinuz" >> $FILE
+echo "   append initrd=$OSVER/initrd.img ks=http://$KSSERVER/$OSVER/ks-yumrepo.cfg devfs=nomount" >> $FILE
+echo "" >> $FILE
+
+echo "menu separator" >> $FILE 
+
+# +------------------------------------------------------------------+
+# | UPDATE SERVICES                                                  |
+# +------------------------------------------------------------------+
+systemctl restart dnsmasq
+systemctl status dnsmasq
+systemctl enable dnsmasq
+
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+if [ -d /sys/fs/selinux ]; then
+   echo 0 > /sys/fs/selinux/enforce > /dev/null 2>&1
+fi
+
+systemctl restart httpd
+systemctl enable httpd
+
+}   # End Build System
+

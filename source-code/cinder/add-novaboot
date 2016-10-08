@@ -1,0 +1,89 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# source configuration file
+export TERM=vt100
+NAGIOS=False                    # unless overridden
+if [ ! -f add-novaboot-profile ]; then
+   echo
+   echo "No add-novaboot-profile file found in current directory"
+   echo
+   exit
+else
+   source add-novaboot-profile
+fi
+cd $installdir
+
+# check before formatting
+ckdisk=`cat add-novaboot-profile | grep ^NOVABOOT_DISK | awk -F= '{print $2}'`
+clear
+echo "------------------------------------------------"
+echo
+echo " Warning:                                       "
+echo
+echo " This script will format the following diski(s) "
+echo " You can change the add-novaboot-profile file     "
+echo " and re-run the script                          "
+echo "                                                "
+echo " $ckdisk"
+echo "                                                "
+
+# install hopper-repo.repo
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./yumclient
+else
+   yum --enablerepo=hopper-repo clean metadata > /dev/null 2>&1
+fi
+
+# disable firewall services
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# --------------------------------------------
+#                 PACKAGES 
+# --------------------------------------------
+yum install -y crudini
+yum install -y glusterfs-server
+
+systemctl enable glusterd
+systemctl restart glusterd
+
+# --------------------------------------------
+#                  NOVABOOT 
+# --------------------------------------------
+declare -a arr1=(`cat add-novaboot-profile | grep ^NOVABOOT_DISK | awk -F= '{print $2}'`)
+for i in ${arr1[@]}; do
+   mkfs.xfs -f /dev/${i}
+   mkdir -p $NOVABOOT_DIR/novaboot${i}1
+   echo "/dev/${i} $NOVABOOT_DIR/novaboot${i}1 xfs noatime,nodiratime,nobarrier,logbufs=8 0 2" >> /etc/fstab
+   mount $NOVABOOT_DIR/novaboot${i}1
+   mkdir -p $NOVABOOT_DIR/novaboot${i}1/brick
+done
+df -h
+
+mkdir -p /var/lib/nova
+echo "$THIS_HOST:$NOVABOOT_VOL /var/lib/nova glusterfs defaults 0 2" >> /etc/fstab
+
+echo "End add-novaboot"

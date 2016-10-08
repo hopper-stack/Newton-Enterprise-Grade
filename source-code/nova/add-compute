@@ -1,0 +1,169 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | NODE CHOICE                              |
+# +------------------------------------------+
+SNGLND=$1
+if [ x$SNGLND == x ]; then
+   echo
+   echo " +-----------------------------------+"
+   echo " |  Usage ./add-compute <hostname>   "
+   echo " +-----------------------------------+"
+   echo
+   exit
+fi
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f ../variables ]; then
+   echo
+   echo " +-----------------------------------------+"
+   echo " |  variables file not in this directory   |"
+   echo " +-----------------------------------------+"
+   echo
+   echo; exit
+else
+   source ../variables
+fi
+
+installdir=/install_dir
+curdir=`pwd`
+cd ..
+./create-files
+
+if [ ! -f ssh-key ]; then
+   ssh-keygen -N "" -f ssh-key > /dev/null 2>&1
+fi
+
+cd $curdir
+
+echo "+------------------------------------------+"
+echo "| Distributing software                    |"
+echo "+------------------------------------------+"
+
+# compute
+node=`cat $curdir/../variables | grep "\b${SNGLND}\b" | grep HN | cut -d= -f1 | rev | cut -c 3- | rev`
+eval TMP=${node}HSTPW
+sngpass=`cat $curdir/../variables | grep ^$TMP | cut -f2 -d=`
+sngip=`cat $curdir/../variables | grep ^${node}IP | cut -f2 -d=`
+sngnum=`cat $curdir/../variables | grep "\b${SNGLND}\b" | grep HN | cut -d= -f1 | rev | cut -c 3- | rev | cut -c 8-20`
+
+sshpass -p $sngpass ssh-copy-id -o StrictHostKeyChecking=no -i $curdir/../ssh-key.pub root@$sngip > /dev/null 2>&1
+
+# +------------------------------------------+
+# | DISTRIBUTE KEYS                          |
+# +------------------------------------------+
+# compute
+ssh -o StrictHostKeyChecking=no -i $curdir/../ssh-key $sngip mkdir -p $installdir
+scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key $curdir/../ssh-key $sngip:$installdir > /dev/null 2>&1
+scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key $curdir/../ssh-key.pub $sngip:/root/.ssh/authorized_keys > /dev/null 2>&1
+ssh -i $curdir/../ssh-key $sngip chmod 600 $installdir/ssh-key
+
+echo
+# +------------------------------------------+
+# | DISTRIBUTE FILES                         |
+# +------------------------------------------+
+# nova
+echo "+------------------------------------------+"
+echo "| Compute                                  |"
+echo "+------------------------------------------+"
+
+DIR=$curdir
+scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/nova${sngnum}-profile $sngip:$installdir/profile
+scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/compute $sngip:$installdir/compute
+
+# etc hosts
+DIR="../misc"
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/hosts-file $sngip:$installdir
+fi
+
+DIR="../apps"
+scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/patch-client* $sngip:$installdir
+if [ x$ENABLE_CLAMAV == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/clamav* $sngip:$installdir
+fi
+if [ x$ENABLE_LDAP == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/ldap-client $sngip:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/ldap-server-profile $sngip:$installdir
+fi
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+  scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/nagios-client $sngip:$installdir
+fi
+if [ x$ENABLE_AMANDA != xFalse ]; then
+  scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/amanda-client $sngip:$installdir
+fi
+if [ x$ENABLE_DNS == xTrue ]; then
+  scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/dns-client $sngip:$installdir
+fi
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/logstash-client $sngip:$installdir
+fi
+echo
+
+# LVM
+if [ x$ENABLE_LVM == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| LVM                                      |"
+   echo "+------------------------------------------+"
+   DIR="../cinder"
+   if [ -f ${DIR}/lvm${sngnum}-profile ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/lvm${sngnum}-profile $sngip:$installdir/lvm-profile
+      scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/lvm-volume $sngip:$installdir/lvm-volume
+   fi
+   echo
+fi
+
+# BLOCK
+if [ x$ENABLE_BLOCK == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| BLOCK                                    |"
+   echo "+------------------------------------------+"
+   DIR="../cinder"
+   if [ -f ${DIR}/block${sngnum}-profile ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/block${sngnum}-profile $sngip:$installdir/block-profile
+      scp -o StrictHostKeyChecking=no -i $curdir/../ssh-key ${DIR}/block-volume $sngip:$installdir/block-volume
+   fi
+   echo
+fi
+
+# +------------------------------------------+
+# | CLEAN UP                                 |
+# +------------------------------------------+
+rm -f /tmp/yes
+rm -f /tmp/listing
+
+DEBUG=False
+if [ x$DEBUG != xTrue ]; then
+   rm -rf controller/controller[0-9]-profile
+   rm -rf block/block[0-9]-profile
+   rm -rf compute/compute[0-9]-profile
+   rm -rf gluster/add-gluster[0-9]-profile
+   rm -rf gluster/gluster-volume-profile
+   rm -rf api/*-profile
+   rm -rf misc/hosts-file
+   rm -rf haproxy/haproxy[0-9]-profile
+   rm -rf lvm/lvm[0-9]-profile
+   rm -rf network/network[0-9]-profile
+   rm -rf storage/storage[0-9]-profile
+fi
+

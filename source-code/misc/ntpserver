@@ -1,0 +1,65 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f ntpserver-profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source ntpserver-profile
+fi
+
+# patch system
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# chronyc
+yum install -y chrony.x86_64
+file=/etc/chrony.conf
+sed -i 's/^server/# server/g' $file
+sed -i 's/^#local stratum 10/local stratum 10/g' $file
+sed -i "/#allow/a \
+allow all" $file
+systemctl enable chronyd
+systemctl restart chronyd
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum install -y iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# update NTP
+ntpdate -u pool.ntp.org
+systemctl enable ntpd.service
+systemctl restart ntpd.service
+sleep 10
+

@@ -1,0 +1,925 @@
+#!/bin/bash
+
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f variables ]; then
+   echo
+   echo " +-----------------------------------------+"
+   echo " |  variables file not in this directory   |"
+   echo " +-----------------------------------------+"
+   echo
+   echo; exit
+fi
+
+ENABLE_GLUSTER=False
+ENABLE_NAGIOS=False
+ENABLE_NAGIOS_LM=False
+ENABLE_GLUSTER=False
+ENABLE_LVM=False
+ENABLE_BLOCK=False
+ENABLE_AMANDA=False
+ENABLE_LOGSTASH=False
+ENABLE_NTP=False
+
+installdir=/install_dir
+curdir=`pwd`
+source variables
+
+# +------------------------------------------+
+# | INSTALL SSHPASS VIA ANSIBLE              |
+# +------------------------------------------+
+yum install -y sshpass > /dev/null 2>&1
+
+echo "+------------------------------------------+"
+echo "| Distributing software                    |"
+echo "+------------------------------------------+"
+
+# +------------------------------------------+
+# | ENABLE SSH                               |
+# +------------------------------------------+
+rm -rf /tmp/listing
+echo "" > /tmp/yes
+echo "" >> /tmp/yes
+if [ ! -f ssh-key ]; then
+   ssh-keygen -N "" -f ssh-key > /dev/null 2>&1
+fi
+
+# haproxy
+count=1
+declare -a arr1=(`cat $curdir/variables  | grep ^HAPROXY[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   eval TMP=HAPROXY${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   sshpass -p $TMP ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$j > /dev/null 2>&1
+   echo $j >> /tmp/listing
+   let count=count+1
+done
+
+# controller
+count=1
+declare -a arr1=(`cat $curdir/variables  | grep ^CONTRL[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   eval TMP=CONTRL${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   sshpass -p $TMP  ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$j > /dev/null 2>&1
+   echo $j >> /tmp/listing
+   let count=count+1
+done
+
+# storage
+count=1
+declare -a arr1=(`cat $curdir/variables  | grep ^STORAGE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   eval TMP=STORAGE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   sshpass -p $TMP  ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$j > /dev/null 2>&1
+   echo $j >> /tmp/listing
+   let count=count+1
+done
+
+# network
+count=1
+declare -a arr1=(`cat $curdir/variables  | grep ^NETWORK[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   eval TMP=NETWORK${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   sshpass -p $TMP  ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$j > /dev/null 2>&1
+   echo $j >> /tmp/listing
+   let count=count+1
+done
+
+# compute
+count=1
+declare -a arr1=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   sshpass -p $TMP ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$j > /dev/null 2>&1
+   echo $j >> /tmp/listing
+   let count=count+1
+done
+
+# repository
+ckfile=`cat /tmp/listing | grep $FILESERVER`
+if [ x$ckfile == x ]; then
+   sshpass -p $FILESERVERHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$FILESERVER > /dev/null 2>&1
+   echo $FILESERVER >> /tmp/listing
+fi
+
+# squid 
+if [ x$ENABLE_SQUID == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $SQUIDDSERVERIP`
+   if [ x$ckfile == x ]; then
+      sshpass -p $SQDSERHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$SQUIDDSERVERIP > /dev/null 2>&1
+      echo $SQUIDDSERVERIP >> /tmp/listing
+   fi
+fi
+
+# backup
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $BCKUPSERVER`
+   if [ x$ckfile == x ]; then
+      sshpass -p $ABACKHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$BCKUPSERVER > /dev/null 2>&1
+      echo $BCKUPSERVER >> /tmp/listing
+   fi
+fi
+
+# DNS or LDAP
+if [[ x$ENABLE_DNS == xTrue || x$ENABLE_LDAP == xTrue ]]; then
+   ckfile=`cat /tmp/listing | grep $DNSSERVERIP`
+   if [ x$ckfile == x ]; then
+      sshpass -p $DNSHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$DNSSERVERIP > /dev/null 2>&1
+      echo $DNSSERVERIP >> /tmp/listing
+   fi
+fi
+
+# monitoring
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $NAGIOSSERVER`
+   if [ x$ckfile == x ]; then
+      sshpass -p $NAGIHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$NAGIOSSERVER > /dev/null 2>&1
+      echo $NAGIOSSERVER >> /tmp/listing
+   fi
+fi
+
+# Nagios log manager
+if [ x$ENABLE_NAGIOS_LM == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $NAGIOSLOGMGR`
+   if [ x$ckfile == x ]; then
+      sshpass -p $NAGLMPASS ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$NAGIOSLOGMGR > /dev/null 2>&1
+      echo $NAGIOSLOGMGR >> /tmp/listing
+   fi
+fi
+
+# logstash
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $LOGSTASHIP`
+   if [ x$ckfile == x ]; then
+      sshpass -p $LOGSHHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$LOGSTASHIP > /dev/null 2>&1
+      echo $LOGSTASHIP >> /tmp/listing
+   fi
+fi
+
+# ntp
+if [ x$ENABLE_NTP == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $NTPSERVER`
+   if [ x$ckfile == x ]; then
+      sshpass -p $NTPCONFIGHHSTPW ssh-copy-id -o StrictHostKeyChecking=no -i ssh-key.pub root@$NTPSERVER > /dev/null 2>&1
+      echo $NTPSERVER >> /tmp/listing
+   fi
+fi
+
+# +------------------------------------------+
+# | GENERATE KEYS                            |
+# +------------------------------------------+
+if [ ! -f ssh-key ]; then
+   ssh-keygen -N "" -f ssh-key > /dev/null 2>&1
+fi
+
+chmod 600 $curdir/ssh-key
+cat ssh-key.pub > /root/.ssh/authorized_keys
+
+# haproxy
+declare -a arr1=(`cat $curdir/variables  | grep ^HAPROXY[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $j mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $j:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $j:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $j chmod 600 $installdir/ssh-key
+done
+
+# sontroller
+declare -a arr1=(`cat $curdir/variables  | grep ^CONTRL[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $j mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $j:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $j:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $j chmod 600 $installdir/ssh-key
+done
+
+# network
+declare -a arr1=(`cat $curdir/variables  | grep ^NETWORK[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $j mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $j:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $j:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $j chmod 600 $installdir/ssh-key
+done
+
+# storage
+declare -a arr1=(`cat $curdir/variables  | grep ^STORAGE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr1[@]}; do
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $j mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $j:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $j:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $j chmod 600 $installdir/ssh-key
+done
+
+# compute
+declare -a arr2=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr2[@]}; do
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $j mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $j:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $j:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $j chmod 600 $installdir/ssh-key
+done
+
+# repository
+ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $FILESERVER mkdir -p $installdir
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $FILESERVER:$installdir > /dev/null 2>&1
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $FILESERVER:/root/.ssh/authorized_keys > /dev/null 2>&1
+ssh -i $curdir/ssh-key $FILESERVER chmod 600 $installdir/ssh-key
+
+# squid
+if [ x$ENABLE_SQUID == xTrue ]; then
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $SQUIDDSERVERIP mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $SQUIDDSERVERIP:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $SQUIDDSERVERIP:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $SQUIDDSERVERIP chmod 600 $installdir/ssh-key
+fi
+
+# backup
+if [ x$ENABLE_AMANDA == xTrue ]; then
+      ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $BCKUPSERVER mkdir -p $installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $BCKUPSERVER:$installdir > /dev/null 2>&1
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $BCKUPSERVER:/root/.ssh/authorized_keys > /dev/null 2>&1
+      ssh -i $curdir/ssh-key $BCKUPSERVER chmod 600 $installdir/ssh-key
+fi
+
+# monitoring
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $NAGIOSSERVER`
+   if [ x$ckfile != x ]; then
+      ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $NAGIOSSERVER mkdir -p $installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $NAGIOSSERVER:$installdir > /dev/null 2>&1
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $NAGIOSSERVER:/root/.ssh/authorized_keys > /dev/null 2>&1
+      ssh -i $curdir/ssh-key $NAGIOSSERVER chmod 600 $installdir/ssh-key
+   fi
+fi
+
+# Nagios log manager
+if [ x$ENABLE_NAGIOS_LM == xTrue ]; then
+   ckfile=`cat /tmp/listing | grep $NAGIOSLOGMGR`
+   if [ x$ckfile != x ]; then
+      ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $NAGIOSLOGMGR mkdir -p $installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $NAGIOSLOGMGR:$installdir > /dev/null 2>&1
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $NAGIOSLOGMGR:/root/.ssh/authorized_keys > /dev/null 2>&1
+      ssh -i $curdir/ssh-key $NAGIOSLOGMGR chmod 600 $installdir/ssh-key
+   fi
+fi
+
+# DNS or LDAP
+if [[ x$ENABLE_DNS == xTrue || x$ENABLE_LDAP == xTrue ]]; then
+   ckfile=`cat /tmp/listing | grep $DNSSERVERIP`
+   if [ x$ckfile != x ]; then
+      ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $DNSSERVERIP mkdir -p $installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $DNSSERVERIP:$installdir > /dev/null 2>&1
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $DNSSERVERIP:/root/.ssh/authorized_keys > /dev/null 2>&1
+      ssh -i $curdir/ssh-key $DNSSERVERIP chmod 600 $installdir/ssh-key
+   fi
+fi
+
+# logstash
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $LOGSTASHIP mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $LOGSTASHIP:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $LOGSTASHIP:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $LOGSTASHIP chmod 600 $installdir/ssh-key
+fi
+
+# ntp
+if [ x$ENABLE_NTP == xTrue ]; then
+   ssh -o StrictHostKeyChecking=no -i $curdir/ssh-key $NTPSERVER mkdir -p $installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key $NTPSERVER:$installdir > /dev/null 2>&1
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key $curdir/ssh-key.pub $NTPSERVER:/root/.ssh/authorized_keys > /dev/null 2>&1
+   ssh -i $curdir/ssh-key $NTPSERVER chmod 600 $installdir/ssh-key
+fi
+
+echo
+# +------------------------------------------+
+# | DISTRIBUTE FILES                         |
+# +------------------------------------------+
+# haproxy
+DIR="ha"
+echo "+------------------------------------------+"
+echo "| HA Proxy                                 |"
+echo "+------------------------------------------+"
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ha1-profile $HAPROXY1IP:$installdir/profile
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/haproxy $HAPROXY1IP:$installdir/haproxy
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ha2-profile $HAPROXY2IP:$installdir/profile
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/haproxy $HAPROXY2IP:$installdir/haproxy
+
+# etc hosts
+DIR="misc"
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $HAPROXY2IP:$installdir
+fi
+
+# api
+DIR="apps"
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $HAPROXY1IP:$installdir
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $HAPROXY2IP:$installdir
+if [ x$ENABLE_CLAMAV == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $HAPROXY2IP:$installdir
+fi
+if [ x$ENABLE_LDAP == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $HAPROXY2IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $HAPROXY2IP:$installdir
+fi
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $HAPROXY2IP:$installdir
+fi
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $HAPROXY2IP:$installdir
+fi
+if [ x$ENABLE_DNS == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $HAPROXY2IP:$installdir
+fi
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $HAPROXY1IP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $HAPROXY2IP:$installdir
+fi
+echo
+
+# controller
+echo "+------------------------------------------+"
+echo "| Controller                               |"
+echo "+------------------------------------------+"
+count=1
+declare -a arr3=(`cat $curdir/variables  | grep ^CONTRL[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr3[@]}; do
+   eval TMP=CONTRL${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   DIR="api"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/api${count}-profile $j:$installdir/profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/controller $j:$installdir/controller
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/caption.png $j:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/frontpage.png $j:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/favicon.ico $j:$installdir
+   if [ "$count" -eq "1" ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/install-hopper-stack $j:$installdir/install-hopper-stack
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${curdir}/variables $j:$installdir/variables
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/verify-hopper-stack $j:$installdir/verify-hopper-stack
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-loadbalancer $j:$installdir/add-loadbalancer
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-project $j:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/tunnel-subnet $j:$installdir/tunnel-subnet
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/vlan-subnet $j:$installdir/vlan-subnet
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/upload-image $j:$installdir/upload-image
+   fi
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $j:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $j:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $j:$installdir
+   fi
+   if [ "$count" -eq "1" ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/keepass-server $j:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/keepass-server-profile $j:$installdir
+   fi
+   if [ x$ENABLE_S3BACKUP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/s3backup $j:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $j:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $j:$installdir
+   fi
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $j:$installdir
+   fi
+   if [ x$ENABLE_AMANDA == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $j:$installdir
+   fi
+   if [ x$ENABLE_DNS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $j:$installdir
+   fi
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $j:$installdir
+   fi
+   let count=count+1
+done
+echo
+
+# storage
+echo "+------------------------------------------+"
+echo "| Storage                                  |"
+echo "+------------------------------------------+"
+count=1
+declare -a arr3=(`cat $curdir/variables  | grep ^STORAGE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr3[@]}; do
+   eval TMP=STORAGE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   DIR="swift"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/swift${count}-profile $j:$installdir/profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/storage $j:$installdir/storage
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/build-ring $j:$installdir/build-ring
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $j:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i ssh-key ${DIR}/patch-client* $j:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i ssh-key ${DIR}/clamav* $j:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i ssh-key ${DIR}/ldap-client $j:$installdir
+      scp -o StrictHostKeyChecking=no -i ssh-key ${DIR}/ldap-server-profile $j:$installdir
+   fi
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $j:$installdir
+   fi
+   if [ x$ENABLE_AMANDA == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $j:$installdir
+   fi
+   if [ x$ENABLE_DNS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $j:$installdir
+   fi
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $j:$installdir
+   fi
+   let count=count+1
+done
+echo
+
+# nova
+echo "+------------------------------------------+"
+echo "| Compute                                  |"
+echo "+------------------------------------------+"
+count=1
+declare -a arr4=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr4[@]}; do
+   eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+   DIR="nova"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nova${count}-profile $j:$installdir/profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/compute $j:$installdir/compute
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $j:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $j:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $j:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $j:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $j:$installdir
+   fi
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $j:$installdir
+   fi
+   if [ x$ENABLE_AMANDA == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $j:$installdir
+   fi
+   if [ x$ENABLE_DNS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $j:$installdir
+   fi
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $j:$installdir
+   fi
+   let count=count+1
+done
+echo
+
+# network
+echo "+------------------------------------------+"
+echo "| Network                                  |"
+echo "+------------------------------------------+"
+count=1
+declare -a arr4=(`cat $curdir/variables  | grep ^NETWORK[0-9]IP | awk -F= '{print $2}'`)
+for j in ${arr4[@]}; do
+   DIR="neutron"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/neutron${count}-profile $j:$installdir/profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/network $j:$installdir
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $j:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $j:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $j:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $j:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $j:$installdir
+   fi
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $j:$installdir
+   fi
+   if [ x$ENABLE_AMANDA == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $j:$installdir
+   fi
+   if [ x$ENABLE_DNS == xTrue ]; then
+     scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $j:$installdir
+   fi
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $j:$installdir
+   fi
+   let count=count+1
+done
+echo
+
+# LVM
+if [ x$ENABLE_LVM == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| LVM                                      |"
+   echo "+------------------------------------------+"
+   DIR="cinder"
+   count=1
+   declare -a arr6=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+   for j in ${arr6[@]}; do
+      if [ -f ${DIR}/lvm${count}-profile ]; then
+         eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/lvm${count}-profile $j:$installdir/lvm-profile
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/lvm-volume $j:$installdir/lvm-volume
+      fi
+      let count=count+1
+   done
+   echo
+fi
+
+# BLOCK
+if [ x$ENABLE_BLOCK == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| BLOCK                                    |"
+   echo "+------------------------------------------+"
+   DIR="cinder"
+   count=1
+   declare -a arr6=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+   for j in ${arr6[@]}; do
+      if [ -f ${DIR}/block${count}-profile ]; then
+         eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/block${count}-profile $j:$installdir/block-profile
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/block-volume $j:$installdir/block-volume
+      fi
+      let count=count+1
+   done
+   echo
+fi
+
+# gluster
+if [ x$ENABLE_GLUSTER == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Gluster                                  |"
+   echo "+------------------------------------------+"
+   count=1
+   declare -a arr7=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+   for j in ${arr7[@]}; do
+      DIR="cinder"
+      eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+      if [ -f ${DIR}/add-gluster${count}-profile ]; then
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-gluster${count}-profile $j:$installdir/add-gluster-profile
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-gluster $j:$installdir/add-gluster
+         DIR="apps"
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $j:$installdir
+         if [ x$ENABLE_CLAMAV == xTrue ]; then
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $j:$installdir
+         fi
+         if [ x$ENABLE_LDAP == xTrue ]; then
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $j:$installdir
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $j:$installdir
+         fi
+         if [ x$ENABLE_NAGIOS == xTrue ]; then
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-client $j:$installdir
+         fi
+         if [ x$ENABLE_AMANDA == xTrue ]; then
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-client $j:$installdir
+         fi
+         if [ x$ENABLE_DNS == xTrue ]; then
+           scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-client $j:$installdir
+         fi
+         if [ x$ENABLE_LOGSTASH == xTrue ]; then
+            scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-client $j:$installdir
+         fi
+      fi
+      let count=count+1
+   done
+
+   # gluster #1
+   DIR="cinder"
+   TMPK=`cat $curdir/variables | grep ^"\<FIRST_GLUSTER_NODE\>" | awk -F= '{print $2}' | sed s/STORAGE/UTE/g`
+   eval FNODE=$TMPK
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/gluster-volume-profile $FNODE:$installdir/gluster-volume-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/gluster-volume $FNODE:$installdir/gluster-volume
+   echo
+fi
+
+# nova boot
+if [ x$ENABLE_NOVABOOT == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Nova boot                                |"
+   echo "+------------------------------------------+"
+   count=1
+   declare -a arr7=(`cat $curdir/variables  | grep ^COMPUTE[0-9]IP | awk -F= '{print $2}'`)
+   for j in ${arr7[@]}; do
+      DIR="cinder"
+      eval TMP=COMPUTE${count}HSTPW
+   TMP=`cat variables | grep ^$TMP | cut -f2 -d=`
+      if [ -f ${DIR}/add-novaboot${count}-profile ]; then
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-novaboot${count}-profile $j:$installdir/add-novaboot-profile
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/add-novaboot $j:$installdir/add-novaboot
+         DIR="apps"
+         scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $j:$installdir
+      fi
+      let count=count+1
+   done
+
+   # nova-boot #1
+   DIR="cinder"
+   TMPK=`cat $curdir/variables | grep ^"\<FIRST_NOVABOOT_NODE\>" | awk -F= '{print $2}' | sed s/STORAGE/UTE/g`
+   eval FNODE=$TMPK
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/novaboot-volume-profile $FNODE:$installdir/novaboot-volume-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/novaboot-volume $FNODE:$installdir/novaboot-volume
+   echo
+fi
+
+# backup
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Amanda Backup                            |"
+   echo "+------------------------------------------+"
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-profile $BCKUPSERVER:$installdir/amanda-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/amanda-server $BCKUPSERVER:$installdir/amanda-server
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $BCKUPSERVER:$installdir
+
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $BCKUPSERVER:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $BCKUPSERVER:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $BCKUPSERVER:$installdir
+   fi
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $BCKUPSERVER:$installdir
+   fi
+   echo
+fi
+
+# repository 
+echo "+------------------------------------------+"
+echo "| Repository                               |"
+echo "+------------------------------------------+"
+DIR="apps"
+if [ x$OSFLAVOR == xCentOS ]; then
+   PFILE=patch-server-profile
+   CFILE=patch-server
+else
+   PFILE=patch-server-rhel-profile
+   CFILE=patch-server-rhel
+fi
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/$CFILE $FILESERVER:$installdir/$CFILE
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/$PFILE $FILESERVER:$installdir/$PFILE
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key misc/make-iso $FILESERVER:$installdir/make-iso
+scp -o StrictHostKeyChecking=no -i $curdir/ssh-key misc/unpack-iso $FILESERVER:$installdir/unpack-iso
+
+if [ x$ENABLE_CLAMAV == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $FILESERVER:$installdir
+fi
+if [ x$ENABLE_LDAP == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $FILESERVER:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $FILESERVER:$installdir
+fi
+
+# etc hosts
+DIR="misc"
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $FILESERVER:$installdir
+fi
+echo
+
+# DNS
+if [ x$ENABLE_DNS == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| DNS Server                               |"
+   echo "+------------------------------------------+"
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-server-profile $DNSSERVERIP:$installdir/dns-server-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/dns-server $DNSSERVERIP:$installdir/dns-server
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $DNSSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap* $DNSSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $DNSSERVERIP:$installdir
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $DNSSERVERIP:$installdir
+   fi
+   echo
+fi
+
+# LDAP
+if [ x$ENABLE_LDAP == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| LDAP Server                              |"
+   echo "+------------------------------------------+"
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $DNSSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap* $DNSSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $DNSSERVERIP:$installdir
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $DNSSERVERIP:$installdir
+   fi
+   echo
+fi
+
+# squid
+if [ x$ENABLE_SQUID == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Squid Server                             |"
+   echo "+------------------------------------------+"
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/squid-server-profile $SQUIDDSERVERIP:$installdir/squid-server-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/squid-server $SQUIDDSERVERIP:$installdir/squid-server
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $SQUIDDSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $SQUIDDSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $SQUIDDSERVERIP:$installdir
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $SQUIDDSERVERIP:$installdir
+   echo
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $SQUIDDSERVERIP:$installdir
+   fi
+   echo
+fi
+
+# monitoring
+if [ x$ENABLE_NAGIOS == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Nagios Monitoring                        |"
+   echo "+------------------------------------------+"
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $NAGIOSSERVER:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-server $NAGIOSSERVER:$installdir/nagios-server
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-server-profile $NAGIOSSERVER:$installdir/nagios-server-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $NAGIOSSERVER:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $NAGIOSSERVER:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $NAGIOSSERVER:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $NAGIOSSERVER:$installdir
+   fi
+   echo
+fi
+
+# Nagios log manager
+if [ x$ENABLE_NAGIOS_LM == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Nagios Log Manager                       |"
+   echo "+------------------------------------------+"
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $NAGIOSLOGMGR:$installdir
+   fi
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-log-manager $NAGIOSLOGMGR:$installdir/nagios-log-manager
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/nagios-log-manager-profile $NAGIOSLOGMGR:$installdir/nagios-log-manager-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $NAGIOSLOGMGR:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $NAGIOSLOGMGR:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $NAGIOSLOGMGR:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $NAGIOSLOGMGR:$installdir
+   fi
+   echo
+fi
+
+# logstash
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| Logstash Server                          |"
+   echo "+------------------------------------------+"
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-server $LOGSTASHIP:$installdir/logstash-server
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/logstash-server-profile $LOGSTASHIP:$installdir/logstash-server-profile
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $LOGSTASHIP:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $LOGSTASHIP:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $LOGSTASHIP:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $LOGSTASHIP:$installdir
+   fi
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $LOGSTASHIP:$installdir
+   fi
+   echo
+fi
+
+# ntp
+if [ x$ENABLE_NTP == xTrue ]; then
+   echo "+------------------------------------------+"
+   echo "| NTP Server                               |"
+   echo "+------------------------------------------+"
+   DIR="misc"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ntpserver $NTPSERVER:$installdir/ntpserver
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ntpserver-profile $NTPSERVER:$installdir/ntpserver-profile
+
+   DIR="apps"
+   scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/patch-client* $NTPSERVER:$installdir
+   if [ x$ENABLE_CLAMAV == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/clamav* $NTPSERVER:$installdir
+   fi
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-client $NTPSERVER:$installdir
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/ldap-server-profile $NTPSERVER:$installdir
+   fi
+
+   # etc hosts
+   DIR="misc"
+   if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+      scp -o StrictHostKeyChecking=no -i $curdir/ssh-key ${DIR}/hosts-file $NTPSERVER:$installdir
+   fi
+   echo
+
+fi
+
+# +------------------------------------------+
+# | CLEAN UP                                 |
+# +------------------------------------------+
+rm -f /tmp/yes
+rm -f /tmp/listing
+
+DEBUG=False
+if [ x$DEBUG != xTrue ]; then
+   rm -rf controller/controller[0-9]-profile
+   rm -rf block/block[0-9]-profile
+   rm -rf compute/compute[0-9]-profile
+   rm -rf gluster/add-gluster[0-9]-profile
+   rm -rf gluster/gluster-volume-profile
+   rm -rf api/*-profile
+   rm -rf misc/hosts-file
+   rm -rf haproxy/haproxy[0-9]-profile
+   rm -rf lvm/lvm[0-9]-profile
+   rm -rf network/network[0-9]-profile
+   rm -rf storage/storage[0-9]-profile
+fi
+

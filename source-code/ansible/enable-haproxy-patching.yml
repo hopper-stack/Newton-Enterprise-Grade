@@ -1,0 +1,8 @@
+---
+- name: Enable HAproxy Patching
+  hosts: haproxy
+  tasks:
+
+    - name: Clear HAProxy Repository File
+      file: path=/etc/yum.repos.d/hopper-repo.repo state=absent
+

@@ -1,0 +1,20 @@
+---
+- name: Patch All Servers
+  hosts: all-hosts
+  tasks:
+
+    - name: Copy Repository File
+      copy: src=hopper-repo.repo dest=/etc/yum.repos.d
+
+    - name: Disable Repository -- base
+      command: yum-config-manager --disable base
+
+    - name: Disable Repository -- extras
+      command: yum-config-manager --disable extras
+
+    - name: Disable Repository -- updates
+      command: yum-config-manager --disable updates
+
+    - name: Patch Host
+      yum: name=* state=latest
+

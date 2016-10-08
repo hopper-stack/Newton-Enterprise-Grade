@@ -1,0 +1,75 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+if [ x$MGTVLAN == xTrue ]; then
+   SUBNT=`cat profile | grep MGTPROJGW | awk -F= '{print $2}' | rev | cut -d. -f2- | rev`
+   STRT=`cat profile | grep MGTRANGE | awk -F= '{print $2}' | awk -F- '{print $1}' | sed -e 's/\s//g'`
+   END=`cat profile | grep MGTRANGE | awk -F= '{print $2}' | awk -F- '{print $2}' | sed -e 's/\s//g'`
+   GW=`cat profile | grep MGTPROJGW | awk -F= '{print $2}' | sed -e 's/\s//g'`
+
+   echo " +---------+"
+   echo " | Details |"
+   echo " +---------+"
+   echo " VLAN ID: $MGTPROJVLAN"
+   echo " Gateway:$GW, Subnet:$SUBNT"
+
+   source admin-openrc.sh
+
+   # tenant id
+   tenant=`openstack project list | grep $PROJECT | awk '{print $2}'`
+   sleep 1
+
+   # tenant VLAN network
+   neutron net-create --tenant-id $tenant $PROJECT-$MGTPROJVLAN \
+   --provider:network_type vlan \
+   --provider:physical_network physnet2 \
+   --provider:segmentation_id $MGTPROJVLAN
+   sleep 1
+
+   source $PROJECT-openrc.sh
+
+   # tennat VLAN subnet
+   neutron subnet-create $PROJECT-$MGTPROJVLAN ${SUBNT}.0/24 \
+   --name $PROJECT-vlansubnet \
+   --dns-nameserver 8.8.8.8 \
+   --gateway $GW
+   sleep 1
+
+   echo " +----------------------+"
+   echo " |  Available networks  |"
+   echo " +----------------------+"
+   nova network-list
+   sleep 1
+fi
+

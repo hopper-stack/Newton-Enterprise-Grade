@@ -1,0 +1,8 @@
+---
+- name: Orchestrate HA Proxy
+  hosts: haproxy
+  tasks:
+
+    - name: Install HA Proxy
+      shell: cd /install_dir; ./haproxy >> /var/log/hopper-stack-haproxy.log 2>&1
+

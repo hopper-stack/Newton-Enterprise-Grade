@@ -1,0 +1,212 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f patch-server-rhel-profile ]; then
+   echo
+   echo " +--------------------------------------------------------+"
+   echo " |  No patch-server-profile file found in this directory  |"
+   echo " +--------------------------------------------------------+"
+   echo
+   exit
+else
+   source patch-server-rhel-profile
+fi
+
+# squid
+if [ x$ENABLE_SQUID == xTrue ]; then
+   sed -i "/distroverpkg=centos-release/a \
+   proxy=http://$SQUIDDSERVERHN:3128" /etc/yum.conf
+fi
+
+# firewall
+firewall-cmd --permanent --zone=public --add-service=http
+firewall-cmd --reload
+
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+yum install -y createrepo
+yum install -y git
+
+mkdir -p /repos/$OSFLAVOR/7/0
+createrepo /repos/$OSFLAVOR/7/0
+createrepo --update /repos/$OSFLAVOR/7/0
+
+# repositories
+#yum install -y yum-plugin-priorities
+yum install -y $HTTPEPEL
+#yum install -y http://rdo.fedorapeople.org/openstack-$RELEASE/rdo-release-$RELEASE.rpm
+wget -P /etc/yum.repos.d http://download.gluster.org/pub/gluster/glusterfs/LATEST/EPEL.repo/glusterfs-epel.repo
+sleep 2
+
+# MariaDB/Galera
+echo "[mariadb]" > /etc/yum.repos.d/mariadb.repo
+echo "name = MariaDB" >> /etc/yum.repos.d/mariadb.repo
+echo "baseurl = http://yum.mariadb.org/5.5/centos7-amd64" >> /etc/yum.repos.d/mariadb.repo
+echo "gpgkey = https://yum.mariadb.org/RPM-GPG-KEY-MariaDB" >> /etc/yum.repos.d/mariadb.repo
+echo "gpgcheck = 1" >> /etc/yum.repos.d/mariadb.repo
+echo "enabled = 1" >> /etc/yum.repos.d/mariadb.repo
+
+# Elastisearch
+EFILE=/etc/yum.repos.d/elasticsearch.repo
+echo "[elasticsearch-2.0]" > $EFILE
+echo "name=Elasticsearch repository for 2.x packages" >> $EFILE
+echo "baseurl=http://packages.elastic.co/elasticsearch/2.x/centos" >> $EFILE
+echo "enabled=1" >> $EFILE
+
+LFILE=/etc/yum.repos.d/logstash.repo
+echo "[logstash-2.0]" > $LFILE
+echo "name=logstash repository for 2.x packages" >> $LFILE
+echo "baseurl=http://packages.elasticsearch.org/logstash/2.0/centos" >> $LFILE
+echo "enabled=1" >> $LFILE
+
+LFILE=/etc/yum.repos.d/logstash-forwarder.repo
+echo "[logstash-forwarder]" > $LFILE
+echo "name=logstash-forwarder repository" >> $LFILE
+echo "baseurl=http://packages.elastic.co/logstashforwarder/centos" >> $LFILE
+echo "enabled=1" >> $LFILE
+
+# reposync
+reposync --repoid=mariadb --download_path=/repos/$OSFLAVOR/7/0/
+
+reposync --repoid=rhel-7-server-extras-rpms --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=rhel-7-server-rh-common-rpms --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=rhel-7-server-rpms --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=rhel-7-server-openstack-8-rpms --download_path=/repos/$OSFLAVOR/7/0/
+
+reposync --repoid=epel --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=epel-testing --download_path=/repos/$OSFLAVOR/7/0/
+
+reposync --repoid=glusterfs-epel --download_path=/repos/$OSFLAVOR/7/0/
+
+
+rpm --import "http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF"
+yum-config-manager --add-repo http://download.mono-project.com/repo/centos/
+reposync --repoid=download.mono-project.com_repo_centos_ --download_path=/repos/$OSFLAVOR/7/0/
+
+reposync --repoid=elasticsearch-2.0 --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=logstash-2.0 --download_path=/repos/$OSFLAVOR/7/0/
+reposync --repoid=logstash-forwarder --download_path=/repos/$OSFLAVOR/7/0/
+
+# update 
+createrepo --update /repos/$OSFLAVOR/7/0
+
+# HTTP
+yum install -y httpd
+ln -s /repos/$OSFLAVOR /var/www/html/$OSFLAVOR
+systemctl enable httpd
+systemctl restart httpd
+
+# HTTP files
+mkdir -p /var/www/html/$HTTPFILES
+mkdir -p /var/www/html/$HTTPFILES/swift
+mkdir -p /var/www/html/$HTTPFILES/glance
+mkdir -p /var/www/html/$HTTPFILES/nagios
+mkdir -p /var/www/html/$HTTPFILES/keepass
+mkdir -p /var/www/html/$HTTPFILES/keystone
+mkdir -p /var/www/html/$HTTPFILES/pip
+mkdir -p /var/www/html/$HTTPFILES/logstash
+mkdir -p /var/www/html/$HTTPFILES/ansible
+mkdir -p /var/www/html/$HTTPFILES/s3cmd
+mkdir -p /var/www/html/$HTTPFILES/kickstart
+PROXYDIR=/var/www/html/$HTTPFILES
+
+# controller
+curl -o $PROXYDIR/swift/proxy-server.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/proxy-server.conf-sample?h=stable/$RELEASE
+sleep 1
+
+# swift
+curl -o $PROXYDIR/swift/account-server.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/account-server.conf-sample?h=stable/$RELEASE
+sleep 1
+curl -o $PROXYDIR/swift/container-server.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/container-server.conf-sample?h=stable/$RELEASE
+sleep 1
+curl -o $PROXYDIR/swift/object-server.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/object-server.conf-sample?h=stable/$RELEASE
+sleep 1
+curl -o $PROXYDIR/swift/container-reconciler.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/container-reconciler.conf-sample?h=stable/$RELEASE
+sleep 1
+curl -o $PROXYDIR/swift/object-expirer.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/object-expirer.conf-sample?h=stable/$RELEASE
+sleep 1
+curl -o $PROXYDIR/swift/swift.conf \
+https://git.openstack.org/cgit/openstack/swift/plain/etc/swift.conf-sample?h=stable/$RELEASE
+sleep 1
+
+# cirros image
+cd $PROXYDIR/glance
+wget http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img
+sleep 2
+
+# keystone
+cd $PROXYDIR/keystone
+curl http://git.openstack.org/cgit/openstack/keystone/plain/httpd/keystone.py?h=stable/$RELEASE \
+| tee main admin
+sleep 2
+
+# nagios
+cd $PROXYDIR/nagios
+wget http://downloads.sourceforge.net/project/nagios/nagios-4.x/nagios-4.0.8/nagios-4.0.8.tar.gz
+sleep 2
+wget http://nagios-plugins.org/download/nagios-plugins-2.0.3.tar.gz
+sleep 2
+wget http://assets.nagios.com/downloads/nagios-log-server/nagioslogserver-latest.tar.gz
+
+# keepass
+cd $PROXYDIR/keepass
+wget http://downloads.sourceforge.net/project/keepass/KeePass%202.x/2.28/KeePass-2.28.zip
+sleep 2
+
+# logstash
+cd $PROXYDIR/logstash
+wget https://mirror.its.sfu.ca/mirror/CentOS-Third-Party/NSG/common/x86_64/jdk-8u65-linux-x64.rpm
+wget https://download.elasticsearch.org/elasticsearch/release/org/elasticsearch/distribution/rpm/elasticsearch/2.1.0/elasticsearch-2.1.0.rpm
+wget https://download.elastic.co/kibana/kibana/kibana-4.3.1-linux-x64.tar.gz
+curl -o kibana-init https://gist.githubusercontent.com/thisismitch/8b15ac909aed214ad04a/raw/fc5025c3fc499ad8262aff34ba7fde8c87ead7c0/kibana-4.x-init
+curl -o kibana-default https://gist.githubusercontent.com/thisismitch/8b15ac909aed214ad04a/raw/fc5025c3fc499ad8262aff34ba7fde8c87ead7c0/kibana-4.x-default
+wget https://download.elastic.co/logstash/logstash/packages/centos/logstash-2.1.1-1.noarch.rpm 
+wget https://download.elastic.co/logstash-forwarder/binaries/logstash-forwarder-0.4.0-1.x86_64.rpm
+
+# Kickstart
+cd $PROXYDIR/kickstart
+if [ x$FALVOR == xCentOS ]; then
+   wget $KSISO
+   mv $KSISO CentOS7.iso
+fi
+
+# s3cmd
+cd $PROXYDIR/s3cmd
+wget https://github.com/s3tools/s3cmd/archive/master.zip
+
+# anti-virus
+cd $installdir
+if [ x$ENABLE_CLAMAV == x"True" ]; then
+   ./clamav-server
+fi
+
+echo "Rebooting server"
+reboot
+

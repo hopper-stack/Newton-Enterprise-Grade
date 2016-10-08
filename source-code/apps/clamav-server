@@ -1,0 +1,67 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f clamav-server-profile ]; then
+   echo
+   echo " +---------------------------------------------------------+"
+   echo " |  No clamav-server-profile file found in this directory  |"
+   echo " +---------------------------------------------------------+"
+   echo
+   exit
+else
+   source clamav-server-profile
+fi
+
+# install
+yum install -y clamav clamav-update
+sed -i -e "s/^Example/#Example/" /etc/freshclam.conf
+sed -i -e "s/^FRESHCLAM_DELAY/#FRESHCLAM_DELAY/" /etc/sysconfig/freshclam
+
+if [ x$ENABLE_SQUID == xTrue ]; then
+   sed -i "/^#HTTPProxyPassword/a \
+   HTTPProxyServer $SQUIDDSERVERHN\n\
+   HTTPProxyPort 3128" /etc/freshclam.conf
+fi
+
+# Update the signature file
+# freshclam
+# test case
+# curl --proxy $SQUIDDSERVERIP:3128 -O http://www.eicar.org/download/eicar.com
+# curl -O http://www.eicar.org/download/eicar.com
+clamscan --infected --remove --recursive $INSTALL_DIR
+
+# cron
+mkdir -p /var/log/clamav
+
+FILE=/var/log/clamav/clamav-scan
+echo "MAILTO=$EMAIL" > $FILE
+echo "freshclam"  >> $FILE
+echo "clamscan --log=/var/log/clamav/log.\`date +%d-%m-%y\` --quiet --infected --remove --recursive /"  >> $FILE
+echo "find /var/log/clamav/log* -ctime +7 -type f -delete" >> $FILE
+chmod 755 /var/log/clamav/clamav-scan
+
+RNDMIN=`echo $[ 1 + $[ RANDOM % 59 ]]`
+RNDHRS=`echo $[ 1 + $[ RANDOM % 6 ]]`
+ipaddr=`hostname -I | awk '{print $1}'`
+echo "$RNDMIN $RNDHRS * * * /var/log/clamav/clamav-scan" >> /var/spool/cron/root
+

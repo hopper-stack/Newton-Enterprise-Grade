@@ -1,0 +1,459 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------------------------------+
+# | KICKSTART BUILD SYSTEM                                           |
+# +------------------------------------------------------------------+
+source ../variables
+source functions
+ksbuildsystem
+
+# +------------------------------------------------------------------+
+# | HAPROXY #1 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-haproxy1.cfg
+
+CLIENTHN=$HAPROXY1HN
+CLIENTIP=$HAPROXY1IP
+CLIENTPASS=$HAPROXY1HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$HAPROXY1XT
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | HAPROXY #2 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-haproxy2.cfg
+
+CLIENTHN=$HAPROXY2HN
+CLIENTIP=$HAPROXY2IP
+CLIENTPASS=$HAPROXY2HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$HAPROXY2XT
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+
+# +------------------------------------------------------------------+
+# | CONTROLLER #1 - KICKSTART CLIENT CONFIGURATION                   |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-controller1.cfg
+
+CLIENTHN=$CONTRL1HN
+CLIENTIP=$CONTRL1IP
+CLIENTPASS=$CONTRL1HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$CONTRL1SQL
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/var/lib/mysql"
+KSADDFS=mysql.fs
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | CONTROLLER #2 - KICKSTART CLIENT CONFIGURATION                   |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-controller2.cfg
+
+CLIENTHN=$CONTRL2HN
+CLIENTIP=$CONTRL2IP
+CLIENTPASS=$CONTRL2HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$CONTRL2SQL
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/var/lib/mysql"
+KSADDFS=mysql.fs
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | CONTROLLER #3 - KICKSTART CLIENT CONFIGURATION                   |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-controller3.cfg
+
+CLIENTHN=$CONTRL3HN
+CLIENTIP=$CONTRL3IP
+CLIENTPASS=$CONTRL3HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$CONTRL3SQL
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/var/lib/mysql"
+KSADDFS=mysql.fs
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | NETWORK #1 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-network1.cfg
+
+CLIENTHN=$NETWORK1HN
+CLIENTIP=$NETWORK1IP
+CLIENTPASS=$NETWORK1HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$NETWORKTUN1IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | NETWORK #2 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-network2.cfg
+
+CLIENTHN=$NETWORK2HN
+CLIENTIP=$NETWORK2IP
+CLIENTPASS=$NETWORK2HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$NETWORKTUN2IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | NETWORK #3 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-network3.cfg
+
+CLIENTHN=$NETWORK3HN
+CLIENTIP=$NETWORK3IP
+CLIENTPASS=$NETWORK3HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$NETWORKTUN3IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | STORAGE #1 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-storage1.cfg
+
+CLIENTHN=$STORAGE1HN
+CLIENTIP=$STORAGE1IP
+CLIENTPASS=$STORAGE1HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$STORAGEINT1IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | STORAGE #2 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-storage2.cfg
+
+CLIENTHN=$STORAGE2HN
+CLIENTIP=$STORAGE2IP
+CLIENTPASS=$STORAGE2HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$STORAGEINT2IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | STORAGE #3 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-storage3.cfg
+
+CLIENTHN=$STORAGE3HN
+CLIENTIP=$STORAGE3IP
+CLIENTPASS=$STORAGE3HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$STORAGEINT3IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #1 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute1.cfg
+
+CLIENTHN=$COMPUTE1HN
+CLIENTIP=$COMPUTE1IP
+CLIENTPASS=$COMPUTE1HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN1IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE1IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #2 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute2.cfg
+
+CLIENTHN=$COMPUTE2HN
+CLIENTIP=$COMPUTE2IP
+CLIENTPASS=$COMPUTE2HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN2IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE2IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #3 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute3.cfg
+
+CLIENTHN=$COMPUTE3HN
+CLIENTIP=$COMPUTE3IP
+CLIENTPASS=$COMPUTE3HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN3IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE3IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #4 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute4.cfg
+
+CLIENTHN=$COMPUTE4HN
+CLIENTIP=$COMPUTE4IP
+CLIENTPASS=$COMPUTE4HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN4IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE4IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #5 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute5.cfg
+
+CLIENTHN=$COMPUTE5HN
+CLIENTIP=$COMPUTE5IP
+CLIENTPASS=$COMPUTE5HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN5IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE5IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | COMPUTE #6 - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-compute6.cfg
+
+CLIENTHN=$COMPUTE6HN
+CLIENTIP=$COMPUTE6IP
+CLIENTPASS=$COMPUTE6HSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$COMPTUN6IP
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+CLIENTADDIP=$COMPSTORAGE6IP
+CLIENTADDIFACE=eth2
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | NTP SERVER - KICKSTART CLIENT CONFIGURATION                      |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-ntp.cfg
+
+CLIENTHN=$NTPCONFIGHN
+CLIENTIP=$NTPSERVER
+CLIENTPASS=$NTPCONFIGHHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+# +------------------------------------------------------------------+
+# | AMANDA BACKUP - KICKSTART CLIENT CONFIGURATION                   |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-amanda.cfg
+
+CLIENTHN=$BCKUPSHN
+CLIENTIP=$BCKUPSERVER
+CLIENTPASS=$ABACKHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/central_backup"
+KSADDFS=bckp.fs
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | NAGIOS MONITORING - KICKSTART CLIENT CONFIGURATION               |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-nagios.cfg
+
+CLIENTHN=$NAGIOSSERVHN
+CLIENTIP=$NAGIOSSERVER
+CLIENTPASS=$NAGIHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+# +------------------------------------------------------------------+
+# | DNS - KICKSTART CLIENT CONFIGURATION                             |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-dns.cfg
+
+CLIENTHN=$DNSSERVHN
+CLIENTIP=$DNSSERVIP
+CLIENTPASS=$DNSHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+# +------------------------------------------------------------------+
+# | SQUID - KICKSTART CLIENT CONFIGURATION                           |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-squid.cfg
+
+CLIENTHN=$SQUIDDSERVERHN
+CLIENTIP=$SQUIDDSERVERIP
+CLIENTPASS=$SQDSERHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDIP=$SQUIDPROXY
+CLIENTADDIFACE=eth1
+ksaddnetwork
+
+# +------------------------------------------------------------------+
+# | LOGSTASH - KICKSTART CLIENT CONFIGURATION                        |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-logstash.cfg
+
+CLIENTHN=$LOGSTASHHN
+CLIENTIP=$LOGSTASHIP
+CLIENTPASS=$LOGSHHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/opt/elasticsearch"
+KSADDFS=lgstsh.fs
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | YUM REPO - KICKSTART CLIENT CONFIGURATION                        |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-yumrepo.cfg
+
+CLIENTHN=$FILESERVERHN
+CLIENTIP=$FILESERVER
+CLIENTPASS=$FILESERVERHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT="/repos"
+KSADDFS=repo
+ksaddlvm
+
+# +------------------------------------------------------------------+
+# | BACKUP - KICKSTART CLIENT CONFIGURATION                          |
+# +------------------------------------------------------------------+
+KSCONFIG=ks-backup.cfg
+
+CLIENTHN=$BCKUPSHN
+CLIENTIP=$BCKUPSERVER
+CLIENTPASS=$ABACKHSTPW
+CLIENTIFACE=eth0
+CLIENTBOOTDISK=vda
+ksconfigcreate
+
+CLIENTADDDISK=vdb
+KSADDMNTPNT=$HOLDINGFOLDER
+KSADDFS=bkup.fs
+ksaddlvm
+

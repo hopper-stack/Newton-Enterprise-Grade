@@ -1,0 +1,1655 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f variables ]; then
+   echo
+   echo " +-----------------------------------------+"
+   echo " |  variables file not in this directory   |"
+   echo " +-----------------------------------------+"
+   echo 
+   exit
+fi
+source variables
+
+DATE=`date +"%a %m %b %Y %Z"`
+installdir=/install_dir
+
+# +-----------------------------------------+
+# | HAPROXY                                 |
+# +-----------------------------------------+
+DIR=ha
+mkdir -p $DIR
+count=`cat variables | grep ^HAPROXY[0-9]IP | wc -l`
+
+for i in $(seq 1 $count); do
+   FILE=ha${i}-profile
+   echo "# --------------------------------" >> $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NODETYPE=haproxy" >> $FILE
+   echo >> $FILE
+
+   echo "FILESERVER=$FILESERVER" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "SERVICE_PASS=$SERVICE_PASS" >> $FILE
+   echo "ADMIN_PASS=$ADMIN_PASS" >> $FILE
+   echo "META_PASS=$META_PASS" >> $FILE
+   echo "RABBIT_PASS=$RABBIT_PASS" >> $FILE
+   echo >> $FILE
+
+   echo "EPEL=$EPEL" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   if [ x$ENABLE_AMANDA != xFalse ]; then
+      echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+      echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   echo "VIP_INTERFACE=$VIPSERVXIF" >> $FILE
+   echo >> $FILE
+
+   echo "CONTROLLER=$CONTRL1IP" >> $FILE
+   echo "CONTROLLER=$CONTRL2IP" >> $FILE
+   echo "CONTROLLER=$CONTRL3IP" >> $FILE
+   echo >> $FILE
+
+   declare -a arr1=(`cat ./variables | grep ^STORAGE[0-9]IP | awk -F= '{print $2}'`)
+   for i in ${arr1[@]}; do
+	echo "STORAGE_NODE=${i}" >> ${FILE}
+   done
+   echo >> $FILE
+
+done
+
+# haporxy #1
+FILE=ha1-profile
+echo "THISHOST_HOST_IP=$HAPROXY1IP" >> $FILE
+echo "OTHER_HOST_IP=$HAPROXY2IP" >> $FILE
+echo "PRIORITY=100" >> $FILE
+echo >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# haporxy #2
+FILE=ha2-profile
+echo "THISHOST_HOST_IP=$HAPROXY2IP" >> $FILE
+echo "OTHER_HOST_IP=$HAPROXY1IP" >> $FILE
+echo "PRIORITY=99" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | CONTROLLER                              |
+# +-----------------------------------------+
+DIR=api
+mkdir -p $DIR
+count=`cat variables | grep ^CONTRL[0-9]IP | wc -l`
+
+for i in $(seq 1 $count); do
+   FILE=api${i}-profile
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NODETYPE=api" >> $FILE
+   echo "RELEASE=$RELEASE" >> $FILE
+   echo "HORIZONTZ=\"$HORIZONTZ\"" >> $FILE
+   echo "NODENUM=$i" >> $FILE
+   echo >> $FILE
+
+   echo "SERVICE_PASS=$SERVICE_PASS" >> $FILE
+   echo "ADMIN_PASS=$ADMIN_PASS" >> $FILE
+   echo "META_PASS=$META_PASS" >> $FILE
+   echo "RABBIT_PASS=$RABBIT_PASS" >> $FILE
+   echo >> $FILE
+
+   echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> $FILE
+   echo "CLUSTER_NAME="\"$CLUSTER_NAME"\"" >> $FILE
+   echo "SQLPASS=$SQLPASS" >> $FILE
+   echo "SECRET_PASS="\"$SECRET_PASS\""" >> $FILE
+   echo "FWAAS=$FWAAS" >> $FILE
+   echo "LBAAS=$LBAAS" >> $FILE
+   echo "CEILOMETER=$CEILOMETER" >> $FILE
+   echo >> $FILE
+
+   echo "EPEL=$EPEL" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo "MAXINSTANCES=$MAXINSTANCES" >> $FILE
+   echo "MAXCORES=$MAXCORES" >> $FILE
+   echo "MAXRAM=$MAXRAM" >> $FILE
+   echo "MAXVOLUMES=$MAXVOLUMES" >> $FILE
+   echo "MAXSTORAGE=$MAXSTORAGE" >> $FILE
+   echo "MAXSNAPSHOTS=$MAXSNAPSHOTS" >> $FILE
+   echo "MAXFLOATIPS=$MAXFLOATIPS" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   if [ x$ENABLE_AMANDA != xFalse ]; then
+      echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+      echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+
+   echo "ENABLE_S3BACKUP=$ENABLE_S3BACKUP" >> $FILE
+   if [ x$ENABLE_S3BACKUP == xTrue ]; then
+      echo "S3POD=$S3POD" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo "S3REGION=$S3REGION" >> $FILE
+      echo "S3ENCRYPTPWD=$S3ENCRYPTPWD" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   echo "HAPROXY1=$HAPROXY1IP" >> $FILE
+   echo "HAPROXY2=$HAPROXY2IP" >> $FILE
+   echo "HAPROXY1HN=$HAPROXY1HN" >> $FILE
+   echo "HAPROXY2HN=$HAPROXY2HN" >> $FILE
+   echo >> $FILE
+
+   echo "CONTROLLER_IP=$CONTRL1IP" >> $FILE
+   echo "SECONDARY_CNTL_IP=$CONTRL2IP" >> $FILE
+   echo "TERTIARY_CNTRL_IP=$CONTRL3IP" >> $FILE
+   echo "CONTROLLER_HN=$CONTRL1HN" >> $FILE
+   echo "SECONDARY_CNTL_HN=$CONTRL2HN" >> $FILE
+   echo "TERTIARY_CNTRL_HN=$CONTRL3HN" >> $FILE
+   echo "PRIMARY_CONTROL_HTNM=$CONTRL1HN.$DNSDOMAIN" >> $FILE
+   echo >> $FILE
+
+   echo "CONTROLLER_SQL=$CONTRL1SQL" >> $FILE
+   echo "SECONDARY_CNTL_SQL=$CONTRL2SQL" >> $FILE
+   echo "TERTIARY_CNTRL_SQL=$CONTRL3SQL" >> $FILE
+   echo >> $FILE
+
+   echo "FILESERVER=$FILESERVER" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "MGTVLAN=$MGTVLAN" >> $FILE
+   echo "MGTRANGE=$MGTRANGE" >> $FILE
+   echo "MGTPROJGW=$MGTPROJGW" >> $FILE
+   echo "MGTPROJVLAN=$MGTPROJVLAN" >> $FILE
+   echo >> $FILE
+
+   echo "NETWORKEXTGW=$NETWORKEXTGW" >> $FILE
+   echo "NETWORKWEXTRNG=$NETWORKWEXTRNG" >> $FILE
+   echo "NETWORKWEXTMASK=$NETWORKWEXTMASK" >> $FILE
+   echo >> $FILE
+
+   echo "TUNNELTYPE=$TUNNELTYPE" >> $FILE
+   echo >> $FILE
+
+   echo "DVR=$DVR" >> $FILE
+   echo >> $FILE
+
+   # send this to controller file to choose which AZ to set
+   echo "ENABLE_GLUSTER=$ENABLE_GLUSTER" >> $FILE
+   echo "ENABLE_LVM=$ENABLE_LVM" >> $FILE
+   echo "ENABLE_BLOCK=$ENABLE_BLOCK" >> $FILE
+   echo >> $FILE
+
+   # availability zone
+   echo "ENABLE_GLUSTER=$ENABLE_GLUSTER" >> $FILE
+   echo "ENABLE_LVM=$ENABLE_LVM" >> $FILE
+   echo "ENABLE_BLOCK=$ENABLE_BLOCK" >> $FILE
+   echo >> $FILE
+
+   echo "CINDER_DELETE=$CINDER_DELETE" >> $FILE
+   echo >> $FILE
+done
+
+# controller node #1
+FILE=api1-profile
+THISHOST_IP=`cat variables | grep ^CONTRL1IP \
+| awk -F= '{print $2}'`
+echo "PRIMARY=True" >> $FILE
+echo "THISHOST_IP=$THISHOST_IP" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# controller node #2
+FILE=api2-profile
+THISHOST_IP=`cat variables | grep ^CONTRL2IP \
+| awk -F= '{print $2}'`
+echo "PRIMARY=Secondary" >> $FILE
+echo "THISHOST_IP=$THISHOST_IP" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# controller node #3
+FILE=api3-profile
+THISHOST_IP=`cat variables | grep ^CONTRL3IP \
+| awk -F= '{print $2}'`
+echo "PRIMARY=Tertiary" >> $FILE
+echo "THISHOST_IP=$THISHOST_IP" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | SWIFT                                   |
+# +-----------------------------------------+
+DIR=swift
+mkdir -p $DIR
+count=`cat variables | grep ^STORAGE[0-9]IP | wc -l`
+
+for i in $(seq 1 $count); do
+   FILE=swift${i}-profile
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NODETYPE=storage" >> $FILE
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "EPEL=$EPEL" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "SERVICE_PASS=$SERVICE_PASS" >> $FILE
+   echo "ADMIN_PASS=$ADMIN_PASS" >> $FILE
+   echo "RABBIT_PASS=$RABBIT_PASS" >> $FILE
+   echo >> $FILE
+
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   if [ x$ENABLE_AMANDA != xFalse ]; then
+      echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+      echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   echo "CONTROLLER_IP=$CONTRL1IP" >> $FILE
+   echo "CONTROLLER_IP=$CONTRL2IP" >> $FILE
+   echo "CONTROLLER_IP=$CONTRL3IP" >> $FILE
+   echo "CONTROLLER_HN=$CONTRL1HN" >> $FILE
+   echo "SECONDARY_CNTL_HN=$CONTRL2HN" >> $FILE
+   echo "TERTIARY_CNTRL_HN=$CONTRL3HN" >> $FILE
+   echo "CONTROLLER_IPS=$CONTRL1IP" >> $FILE
+   echo "SECONDARY_CNTL_IPS=$CONTRL2IP" >> $FILE
+   echo "TERTIARY_CNTRL_IPS=$CONTRL3IP" >> $FILE
+   echo >> $FILE
+
+   for j in $(seq 1 $count); do
+      eval TMP=STORAGE${j}IP
+      eval TMP2=STORAGEINT${j}IP
+      ACTNODE=`cat variables | grep ^$TMP | grep -v SWIFT_DISK | \
+      cut -f2 -d= `
+      INTNODE=`cat variables | grep ^$TMP2 | grep -v SWIFT_DISK | \
+      cut -f2 -d= `
+      cat ./variables | grep ^SWIFT_DISK | grep STORAGE${j}IP \
+      | sed "/$TMP/s//$ACTNODE/" | sed "/$TMP2/s//$INTNODE/" >> $FILE
+   done
+   echo >> $FILE
+
+   echo "FILESERVER=$FILESERVER" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   eval TMP1=STORAGE${i}IP
+   eval TMP2=STORAGE${i}HN
+   eval TMP3=STORAGEINT${i}IP
+   ACTNODE=`cat variables | grep ^$TMP1 | grep -v SWIFT_DISK | \
+   cut -f2 -d= `
+   HSTNODE=`cat variables | grep ^$TMP2 | grep -v SWIFT_DISK | \
+   cut -f2 -d= `
+   INTNODE=`cat variables | grep ^$TMP3 | grep -v SWIFT_DISK | \
+   cut -f2 -d= `
+   echo "STORAGE_HSTNM=$HSTNODE" >> $FILE
+   echo "STORAGE_NODE=$ACTNODE" >> $FILE
+   echo "REPLICATION_NETWORK=$INTNODE" >> $FILE
+   echo >> $FILE
+
+   echo "CEILOMETER=$CEILOMETER" >> $FILE
+   echo >> $FILE
+
+   mv $FILE $DIR
+done
+
+# +-----------------------------------------+
+# | GLUSTER                                 |
+# +-----------------------------------------+
+DIR=cinder
+mkdir -p $DIR
+
+if [ x$ENABLE_GLUSTER == xTrue ]; then
+   declare -a arr1=(`cat variables | grep ^GLUSTER[0-9]*_DISK \
+   | awk -F= '{print $2}' | awk -F: '{print $1}' | sort | uniq \
+   | cut -f2 -d E | cut -f1 -dI`)
+   for i in ${arr1[@]}; do
+
+      FILE=add-gluster${i}-profile
+
+      echo "# --------------------------------" > $FILE
+      echo "#   Hopper installation ${VERSION}" >> $FILE
+      echo "#       $DATE" >> $FILE
+      echo "# --------------------------------" >> $FILE
+      echo "installdir=$installdir" >> $FILE
+      echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+      echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+      echo "STACKNAME=$STACKNAME" >> $FILE
+      echo "PROJECT=$PROJECT" >> $FILE
+      echo "USRPASS=$USRPASS" >> $FILE
+      echo "NTPSERVER=$NTPSERVER" >> $FILE
+      echo >> $FILE
+
+      # format disk
+      eval TMPK=COMPSTORAGE${i}IP
+
+      DISK=`cat variables | grep $TMPK | \
+      grep ^GLUSTER[0-9]*_DISK | grep [a-z] | cut -f2 -d:`
+ 
+      declare -a arr1=(`cat variables | grep $TMPK \
+      | grep ^GLUSTER[0-9]*_DISK | grep [a-z] | cut -f2 -d:`)
+      for l in ${arr1[@]}; do
+        echo "CINDER_DISK=${l}" >> $FILE
+      done
+ 
+      echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+      if [ x$ENABLE_AMANDA != xFalse ]; then
+         echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+         echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+         echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+         echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+         echo >> $FILE
+      fi
+
+      echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+      if [ x$ENABLE_NAGIOS == xTrue ]; then
+         echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+         echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+         echo >> $FILE
+      fi
+
+      echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+      if [ x$ENABLE_LDAP == xTrue ]; then
+         echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+         echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+         echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+         echo >> $FILE
+      fi
+
+      echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+      if [ x$ENABLE_DNS == xTrue ]; then
+         echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+         echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+         echo >> $FILE
+      fi
+
+      echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+      if [ x$ENABLE_LOGSTASH == xTrue ]; then
+         echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+         echo >> $FILE
+      fi
+
+      echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+      echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+      echo >> $FILE
+
+      echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+      if [ -f $FILE ]; then
+         mv $FILE $DIR
+      fi
+
+   done
+fi
+
+# gluster #1
+DIR=cinder
+mkdir -p $DIR
+FILE=gluster-volume-profile
+
+if [ x$ENABLE_GLUSTER == xTrue ]; then
+
+   THISHOST_IP=`cat variables | grep ^COMPUTE1IP \
+   | awk -F= '{print $2}'`
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_GLUSTER=$ENABLE_GLUSTER" >> $FILE
+   echo >> $FILE
+
+   declare -a arr1=(`cat ./variables | \
+   grep ^OTHER_GLUSTER_NODE | awk -F= '{print $2}'`)
+   for i in ${arr1[@]}; do
+      eval TMP=$i
+      echo "OTHER_GLUSTER_NODE=$TMP" >> $FILE
+   done
+   echo >> $FILE
+
+   echo "CINDER_VOL=$CINDER_VOL" >> $FILE
+   echo >> $FILE
+   echo "NETPING=$NETPING" >> $FILE
+   echo >> $FILE
+
+   count1=`cat variables | grep ^GLUSTER[0-9]*_DISK | wc -l`
+   source variables
+   declare -a arr1=(`cat variables | grep ^GLUSTER[0-9]*_DISK`)
+   for s in ${arr1[@]}; do
+      COMPUTE=`echo $s | awk -F= '{print $2}' | awk -F: '{print $1}'`
+      DISK=`echo $s | awk -F= '{print $2}' | awk -F: '{print $2}'`
+      eval TMP=$COMPUTE
+      echo "CINDER_DISK=$TMP:$GLUSTER_DIR/cinder${DISK}1/brick" >> $FILE
+   done
+   echo >> $FILE
+
+   mv $FILE $DIR
+fi
+
+# +-----------------------------------------+
+# | NOVABOOT                                |
+# +-----------------------------------------+
+DIR=cinder
+mkdir -p $DIR
+
+if [ x$ENABLE_NOVABOOT == xTrue ]; then
+
+   declare -a arr1=(`cat variables | grep NOVABOOT[0-9]_DISK \
+   | awk -F= '{print $2}' | awk -F: '{print $1}' | sort | uniq \
+   | cut -f2 -d E | cut -f1 -dI`)
+   for i in ${arr1[@]}; do
+
+      FILE=add-novaboot${i}-profile
+
+      DATE=`date +"%a %m %b %Y %Z"`
+      echo "# --------------------------------" > $FILE
+      echo "#   Hopper installation ${VERSION}" >> $FILE
+      echo "#       $DATE" >> $FILE
+      echo "# --------------------------------" >> $FILE
+      echo "installdir=$installdir" >> $FILE
+      echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+
+      # format the right disk
+      eval TMPK=COMPSTORAGE${i}IP
+
+      HST=`cat variables | grep ^$TMPK | cut -f2 -d=`
+      echo "THIS_HOST=$HST" >> $FILE
+      echo >> $FILE
+
+      DISK=`cat variables | grep $TMPK | \
+      grep ^NOVABOOT[0-9]_DISK | grep [a-z] | cut -f2 -d:`
+
+      declare -a arr1=(`cat variables | grep $TMPK \
+      | grep ^NOVABOOT[0-9]_DISK | grep [a-z] | cut -f2 -d:`)
+      for l in ${arr1[@]}; do
+        echo "NOVABOOT_DISK=${l}" >> $FILE
+      done
+
+      DISK=`cat variables | grep $TMPK | \
+      grep ^NOVABOOT[0-9][0-9]_DISK | grep [a-z] | cut -f2 -d:`
+
+      declare -a arr1=(`cat variables | grep $TMPK \
+      | grep ^NOVABOOT[0-9][0-9]_DISK | grep [a-z] | cut -f2 -d:`)
+      for l in ${arr1[@]}; do
+        echo "NOVABOOT_DISK=${l}" >> $FILE
+      done
+
+      echo "NOVABOOT_DIR=$NOVABOOT_DIR" >> $FILE
+      echo "NOVABOOT_VOL=$NOVABOOT_VOL" >> $FILE
+      echo >> $FILE
+
+      if [ -f $FILE ]; then
+         mv $FILE $DIR
+      fi
+
+   done
+
+fi
+
+# nova-boot node #1
+DIR=cinder
+mkdir -p $DIR
+FILE=novaboot-volume-profile
+
+if [ x$ENABLE_NOVABOOT == xTrue ]; then
+
+   DATE=`date +"%a %m %b %Y %Z"`
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+
+   echo "ENABLE_NOVABOOT=$ENABLE_NOVABOOT" >> $FILE
+   echo >> $FILE
+
+   declare -a arr1=(`cat ./variables | \
+   grep ^OTHER_NOVABOOT_NODE | awk -F= '{print $2}'`)
+
+   for i in ${arr1[@]}; do
+      eval TMP=$i
+      echo "OTHER_NOVABOOT_NODE=$TMP" >> $FILE
+   done
+
+   echo >> $FILE
+
+   echo "NOVABOOT_VOL=$NOVABOOT_VOL" >> $FILE
+   echo "NOVABOOT_DIR=$NOVABOOT_DIR" >> $FILE
+   echo >> $FILE
+   echo "NOVANETPING=$NOVANETPING" >> $FILE
+   echo >> $FILE
+
+   source variables
+
+   count1=`cat variables | grep ^NOVABOOT[0-9]_DISK | wc -l`
+   declare -a arr1=(`cat variables | grep ^NOVABOOT[0-9]_DISK`)
+   for s in ${arr1[@]}; do
+      COMPUTE=`echo $s | awk -F= '{print $2}' | awk -F: '{print $1}'`
+      DISK=`echo $s | awk -F= '{print $2}' | awk -F: '{print $2}'`
+      eval TMP=$COMPUTE
+      echo "NOVABOOT_DISK=$TMP:$NOVABOOT_DIR/novaboot${DISK}1/brick" >> $FILE
+   done
+
+   count1=`cat variables | grep ^NOVABOOT[0-9][0-9]_DISK | wc -l`
+   declare -a arr1=(`cat variables | grep ^NOVABOOT[0-9][0-9]_DISK`)
+   for s in ${arr1[@]}; do
+      COMPUTE=`echo $s | awk -F= '{print $2}' | awk -F: '{print $1}'`
+      DISK=`echo $s | awk -F= '{print $2}' | awk -F: '{print $2}'`
+      eval TMP=$COMPUTE
+      echo "NOVABOOT_DISK=$TMP:$NOVABOOT_DIR/novaboot${DISK}1/brick" >> $FILE
+   done
+
+echo >> $FILE
+mv $FILE $DIR
+
+fi
+
+# +-----------------------------------------+
+# | NOVA                                    |
+# +-----------------------------------------+
+DIR=nova
+mkdir -p $DIR
+
+declare -a arr1=(`cat variables | grep ^COMPUTE[0-9]*HN | grep HN | cut -d= -f1 | rev | cut -c 3- | rev | cut -c 8-20`)
+for i in ${arr1[@]}; do
+   THISHOST_IP=`cat variables | grep ^COMPUTE${i}IP \
+   | awk -F= '{print $2}'`
+   THISHOST_TUNNEL_IP=`cat variables | grep ^COMPTUN${i}IP \
+   | awk -F= '{print $2}'`
+   THISHOST_COMPSTORAGE_IP=`cat variables | grep ^COMPSTORAGE${i}IP \
+   | awk -F= '{print $2}'`
+   FILE=nova${i}-profile
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NODETYPE=nova" >> $FILE
+   echo "RELEASE=$RELEASE" >> $FILE
+   echo "META_PASS=$META_PASS" >> $FILE
+   echo >> $FILE
+
+   echo "FILESERVER=$FILESERVER" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "EPEL=$EPEL" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "SERVICE_PASS=$SERVICE_PASS" >> $FILE
+   echo "ADMIN_PASS=$ADMIN_PASS" >> $FILE
+   echo "RABBIT_PASS=$RABBIT_PASS" >> $FILE
+   echo >> $FILE
+
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   if [ x$ENABLE_AMANDA != xFalse ]; then
+      echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+      echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   echo "HAPROXY1=$HAPROXY1IP" >> $FILE
+   echo "HAPROXY2=$HAPROXY2IP" >> $FILE
+   echo "HAPROXY1HN=$HAPROXY1HN" >> $FILE
+   echo "HAPROXY2HN=$HAPROXY2HN" >> $FILE
+   echo >> $FILE
+
+   echo "CONTROLLER_IP=$CONTRL1IP" >> $FILE
+   echo "SECONDARY_CNTL_IP=$CONTRL2IP" >> $FILE
+   echo "TERTIARY_CNTRL_IP=$CONTRL3IP" >> $FILE
+   echo "CONTROLLER_HN=$CONTRL1HN" >> $FILE
+   echo "SECONDARY_CNTL_HN=$CONTRL2HN" >> $FILE
+   echo "TERTIARY_CNTRL_HN=$CONTRL3HN" >> $FILE
+   echo >> $FILE
+
+   echo "THISHOST_IP=$THISHOST_IP" >> $FILE
+   echo "THISHOST_TUNNEL_IP=$THISHOST_TUNNEL_IP" >> $FILE
+   echo "THISHOST_COMPSTORAGE_IP=$THISHOST_COMPSTORAGE_IP" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_GLUSTER=$ENABLE_GLUSTER" >> $FILE
+   if [ x$ENABLE_GLUSTER == xTrue ]; then
+      echo "GLUSTERSHAREHOST=$FIRST_GLUSTER_NODE" >> $FILE
+      echo "CINDER_VOL=$CINDER_VOL" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "TUNNELTYPE=$TUNNELTYPE" >> $FILE
+   echo >> $FILE
+
+   echo "DVR=$DVR" >> $FILE
+   echo "COMPDVRNIC=$COMPDVRNIC" >> $FILE
+   echo >> $FILE
+
+   echo "MGTVLAN=$MGTVLAN" >> $FILE
+   echo "MGTRANGE=$MGTRANGE" >> $FILE
+   echo "COMPPROJNIC=$COMPPROJNIC" >> $FILE
+   echo >> $FILE
+
+   echo "HYPERVISOR=$HYPERVISOR" >> $FILE
+   echo >> $FILE
+
+   # LVM
+   THISHOST_IP=`cat variables | grep ^COMPUTE${i}IP \
+   | awk -F= '{print $2}'`
+   CHKHST=`cat variables | grep $THISHOST_IP | \
+   grep COMPUTE[0-9]IP | awk -F= '{print $1}'`
+   TSTHST=`cat variables | grep $CHKHST | grep ^LVM[0-9]_DISK | \
+   awk -F= '{print $1}'`
+   if [ x$ENABLE_LVM == xTrue ]; then
+      if [ x$TSTHST != x ]; then
+         echo "ENABLE_LVM=$ENABLE_LVM" >> $FILE
+         echo >> $FILE
+      fi
+   fi
+
+   # BLOCK
+   THISHOST_IP=`cat variables | grep ^COMPUTE${i}IP \
+   | awk -F= '{print $2}'`
+   CHKHST=`cat variables | grep $THISHOST_IP | \
+   grep COMPUTE[0-9]IP | awk -F= '{print $1}'`
+   TSTHST=`cat variables | grep $CHKHST | grep ^BLOCK[0-9]_DISK | \
+   awk -F= '{print $1}'`
+   if [ x$ENABLE_BLOCK == xTrue ]; then
+      if [ x$TSTHST != x ]; then
+         echo "ENABLE_BLOCK=$ENABLE_BLOCK" >> $FILE
+         echo >> $FILE
+      fi
+   fi
+
+   echo "CINDER_DELETE=$CINDER_DELETE" >> $FILE
+   echo >> $FILE
+
+   echo "CEILOMETER=$CEILOMETER" >> $FILE
+   echo >> $FILE
+
+   # flavors
+   cat variables | grep FLAVOR >> $FILE
+   echo >> $FILE
+
+   mv $FILE $DIR
+done
+
+# +-----------------------------------------+
+# | NEUTRON                                 |
+# +-----------------------------------------+
+DIR=neutron
+mkdir -p $DIR
+count=`cat variables | grep ^NETWORK[0-9]IP | wc -l`
+
+for i in $(seq 1 $count); do
+   FILE=neutron${i}-profile
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NODETYPE=neutron" >> $FILE
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "EPEL=$EPEL" >> $FILE
+   echo >> $FILE
+
+   echo "SERVICE_PASS=$SERVICE_PASS" >> $FILE
+   echo "ADMIN_PASS=$ADMIN_PASS" >> $FILE
+   echo "RABBIT_PASS=$RABBIT_PASS" >> $FILE
+   echo "META_PASS=$META_PASS" >> $FILE
+   echo "FWAAS=$FWAAS" >> $FILE
+   echo "LBAAS=$LBAAS" >> $FILE
+   echo >> $FILE
+
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   if [ x$ENABLE_AMANDA != xFalse ]; then
+      echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+      echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+      echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+      echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   echo "HAPROXY1=$HAPROXY1IP" >> $FILE
+   echo "HAPROXY2=$HAPROXY2IP" >> $FILE
+   echo "HAPROXY1HN=$HAPROXY1HN" >> $FILE
+   echo "HAPROXY2HN=$HAPROXY2HN" >> $FILE
+   echo >> $FILE
+
+   echo "CONTROLLER_IP=$CONTRL1IP" >> $FILE
+   echo "SECONDARY_CNTL_IP=$CONTRL2IP" >> $FILE
+   echo "TERTIARY_CNTRL_IP=$CONTRL3IP" >> $FILE
+   echo "CONTROLLER_HN=$CONTRL1HN" >> $FILE
+   echo "SECONDARY_CNTL_HN=$CONTRL2HN" >> $FILE
+   echo "TERTIARY_CNTRL_HN=$CONTRL3HN" >> $FILE
+   echo >> $FILE
+
+   echo "FILESERVER=$FILESERVER" >> $FILE
+   echo "HTTPFILES=$HTTPFILES" >> $FILE
+   echo >> $FILE
+
+   echo "TUNNELTYPE=$TUNNELTYPE" >> $FILE
+   echo >> $FILE
+
+   echo "DVR=$DVR" >> $FILE
+   echo >> $FILE
+
+   echo "MGTVLAN=$MGTVLAN" >> $FILE
+   echo "MGTRANGE=$MGTRANGE" >> $FILE
+   echo "NETWIROJNIC=$NETWIROJNIC" >> $FILE
+   echo >> $FILE
+done
+
+# network #1
+FILE=neutron1-profile
+echo "THISHOST_TUNNEL_IP=$NETWORKTUN1IP" >> $FILE
+echo "EXTNET=$NETWORK1EXTNET" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# network #2
+FILE=neutron2-profile
+echo "THISHOST_TUNNEL_IP=$NETWORKTUN2IP" >> $FILE
+echo "EXTNET=$NETWORK2EXTNET" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# network #3
+FILE=neutron3-profile
+echo "THISHOST_TUNNEL_IP=$NETWORKTUN3IP" >> $FILE
+echo "EXTNET=$NETWORK3EXTNET" >> $FILE
+echo >> $FILE
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | PATCH CLIENT                            |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=patch-client-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo >> $FILE
+echo "RELEASE=$RELEASE" >> $FILE
+echo "VERSION=$VERSION" >> $FILE
+echo "EPEL=$EPEL" >> $FILE
+echo "FILESERVER=$FILESERVER" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+echo >> $FILE
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | PATCH SERVER                            |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+if [ x$OSFLAVOR == xCentOS ]; then
+   FILE=patch-server-profile
+else
+   FILE=patch-server-rhel-profile
+fi
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo >> $FILE
+echo "RELEASE=$RELEASE" >> $FILE
+echo "HTTPEPEL=$HTTPEPEL" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+echo >> $FILE
+echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+echo "SQUIDDSERVERIP=$SQUIDDSERVERIP" >> $FILE
+echo "SQUIDDSERVERHN=$SQUIDDSERVERHN" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | LVM                                     |
+# +-----------------------------------------+
+DIR=cinder
+mkdir -p $DIR
+
+if [ x$ENABLE_LVM == xTrue ]; then
+
+   declare -a arr1=(`cat variables | grep ^COMPUTE[0-9]*HN | grep HN | cut -d= -f1 | rev | cut -c 3- | rev | cut -c 8-20`)
+   for i in ${arr1[@]}; do
+      FILE=lvm${i}-profile
+      THISHOST_IP=`cat variables | grep ^COMPUTE${i}IP \
+      | awk -F= '{print $2}'`
+      THISHOST_COMPSTORAGE_IP=`cat variables | grep ^COMPSTORAGE${i}IP \
+      | awk -F= '{print $2}'`
+
+      count1=`cat variables | grep ^COMPUTE[0-9]IP | wc -l`
+      source variables
+      for j in $(seq 1 $count1); do
+         COMPUTE=`cat variables | grep ^LVM${j}_DISK \
+         | awk -F= '{print $2}' | awk -F: '{print $1}'`
+         DISK=`cat variables | grep ^LVM${j}_DISK \
+         | awk -F= '{print $2}' | awk -F: '{print $2}'`
+         eval TMP=$COMPUTE
+         if [ x$TMP == x$THISHOST_IP ]; then
+            echo "# --------------------------------" > $FILE
+            echo "#   Hopper installation ${VERSION}" >> $FILE
+            echo "#       $DATE" >> $FILE
+            echo "# --------------------------------" >> $FILE
+            echo "installdir=$installdir" >> $FILE
+            echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+            echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+            echo "STACKNAME=$STACKNAME" >> $FILE
+            echo >> $FILE
+            echo "LVMNODE=${i}" >> $FILE
+            echo "ENABLE_LVM=$ENABLE_LVM" >> $FILE
+            echo "CINDER_DISK=$TMP:$DISK" >> $FILE
+            echo "THISHOST_COMPSTORAGE_IP=$THISHOST_COMPSTORAGE_IP" >> $FILE
+            echo >> $FILE
+         fi
+      done
+      if [ -f $FILE ]; then
+         mv $FILE $DIR
+      fi
+   done
+fi
+
+# +-----------------------------------------+
+# | BLOCK                                   |
+# +-----------------------------------------+
+DIR=cinder
+mkdir -p $DIR
+
+if [ x$ENABLE_BLOCK == xTrue ]; then
+   declare -a arr1=(`cat variables | grep ^COMPUTE[0-9]*HN | grep HN | cut -d= -f1 | rev | cut -c 3- | rev | cut -c 8-20`)
+   for i in ${arr1[@]}; do
+      FILE=block${i}-profile
+      THISHOST_IP=`cat variables | grep ^COMPUTE${i}IP \
+      | awk -F= '{print $2}'`
+      THISHOST_COMPSTORAGE_IP=`cat variables | grep ^COMPSTORAGE${i}IP \
+      | awk -F= '{print $2}'`
+      count1=`cat variables | grep ^COMPUTE[0-9]IP | wc -l`
+      source variables
+      for j in $(seq 1 $count1); do
+         COMPUTE=`cat variables | grep ^BLOCK${j}_DISK \
+         | awk -F= '{print $2}' | awk -F: '{print $1}'`
+         DISK=`cat variables | grep ^BLOCK${j}_DISK \
+         | awk -F= '{print $2}' | awk -F: '{print $2}'`
+         eval TMP=$COMPUTE
+         if [ x$TMP == x$THISHOST_IP ]; then
+            echo "# --------------------------------" > $FILE
+            echo "#   Hopper installation ${VERSION}" >> $FILE
+            echo "#       $DATE" >> $FILE
+            echo "# --------------------------------" >> $FILE
+            echo "installdir=$installdir" >> $FILE
+            echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+            echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+            echo "STACKNAME=$STACKNAME" >> $FILE
+            echo "PROJECT=$PROJECT" >> $FILE
+            echo "USRPASS=$USRPASS" >> $FILE
+            echo >> $FILE
+
+            echo "ENABLE_BLOCK=$ENABLE_BLOCK" >> $FILE
+            echo "BLOCKNODE=${i}" >> $FILE
+            echo "CINDER_DISK=$TMP:$DISK" >> $FILE
+            echo "THISHOST_COMPSTORAGE_IP=$THISHOST_COMPSTORAGE_IP" >> $FILE
+            echo >> $FILE
+         fi
+      done
+      if [ -f $FILE ]; then
+         mv $FILE $DIR
+      fi
+   done
+fi
+
+# +-----------------------------------------+
+# | DNS                                     |
+# +-----------------------------------------+
+if [ x$ENABLE_DNS == xTrue ]; then
+   DIR=apps
+   mkdir -p $DIR
+   FILE=dns-server-profile
+
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "PROJECT=$PROJECT" >> $FILE
+   echo "USRPASS=$USRPASS" >> $FILE
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+   echo "THIS_HOST_NAME=$DNSSERVERHN" >> $FILE
+   echo "THIS_HOST_IP=$DNSSERVERIP" >> $FILE
+   echo >> $FILE
+
+   echo "$DNSSERVERIP $DNSSERVERHN" >> $FILE
+   echo "$SQUIDDSERVERIP $SQUIDDSERVERIP" >> $FILE
+   echo >> $FILE
+
+   echo "$VIPSERVXIP $VIPSERVXHN" >> $FILE
+   echo "$HAPROXY1IP $HAPROXY1HN" >> $FILE
+   echo "$HAPROXY2IP $HAPROXY2HN" >> $FILE
+   echo >> $FILE
+
+   END=`cat variables | grep ^CONTRL[0-9]IP | wc -l`
+   for ((i=1;i<=END;i++)); do
+      ip=`cat variables | grep ^CONTRL${i}IP | cut -f2 -d=`
+      hn=`cat variables | grep ^CONTRL${i}HN | cut -f2 -d=`
+      echo "$ip $hn" >> $FILE
+   done
+   echo >> $FILE
+
+   END=`cat variables | grep ^NETWORK[0-9]IP | wc -l`
+   for ((i=1;i<=END;i++)); do
+      ip=`cat variables | grep ^NETWORK${i}IP | cut -f2 -d=`
+      hn=`cat variables | grep ^NETWORK${i}HN | cut -f2 -d=`
+      echo "$ip $hn" >> $FILE
+   done
+   echo >> $FILE
+
+   END=`cat variables | grep ^STORAGE[0-9]IP | wc -l`
+   for ((i=1;i<=END;i++)); do
+      ip=`cat variables | grep ^STORAGE${i}IP | cut -f2 -d=`
+      hn=`cat variables | grep ^STORAGE${i}HN | cut -f2 -d=`
+      echo "$ip $hn" >> $FILE
+   done
+   echo >> $FILE
+
+   declare -a arr1=(`cat variables | grep ^COMPUTE[0-9]*HN | grep HN | cut -d= -f1 | rev | cut -c 3- | rev | cut -c 8-20`)
+   for i in ${arr1[@]}; do
+      ip=`cat variables | grep ^COMPUTE${i}IP | cut -f2 -d=`
+      hn=`cat variables | grep ^COMPUTE${i}HN | cut -f2 -d=`
+      echo "$ip $hn" >> $FILE
+   done
+   echo >> $FILE
+
+   mv $FILE $DIR
+fi
+
+# +-----------------------------------------+
+# | ANTI-VIRUS                              |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=clamav-server-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo >> $FILE
+
+echo "EPEL=$EPEL" >> $FILE
+echo "EMAIL=$EMAIL" >> $FILE
+echo >> $FILE
+
+echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+echo "SQUIDDSERVERIP=$SQUIDDSERVERIP" >> $FILE
+echo "SQUIDDSERVERHN=$SQUIDDSERVERHN" >> $FILE
+echo >> $FILE
+
+echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | OPENLDAP                                |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=ldap-server-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+
+echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+echo "LDAP_PASS=$LDAP_PASS" >> $FILE
+echo "LDAPSERVER=$LDAPSERVER.$DNSDOMAIN" >> $FILE
+echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | MONITORING                              |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=nagios-server-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo "FILESERVER=$FILESERVER" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+echo "RELEASE=$RELEASE" >> $FILE
+echo >> $FILE
+
+echo "EMAIL=$EMAIL" >> $FILE
+echo >> $FILE
+
+count=`cat variables | grep ^HAPROXY[0-9]IP | wc -l`
+for i in $(seq 1 $count); do
+   hn=`cat variables | grep ^HAPROXY${i}HN \
+   | awk -F= '{print $2}'`
+   ip=`cat variables | grep ^HAPROXY${i}IP \
+   | awk -F= '{print $2}'`
+   echo "HAIP${i}=$ip" >> $FILE
+   echo "HASV${i}=$hn" >> $FILE
+done
+echo >> $FILE
+
+count=`cat variables | grep ^CONTRL[0-9]IP | wc -l`
+for i in $(seq 1 $count); do
+   hn=`cat variables | grep ^CONTRL${i}HN \
+   | awk -F= '{print $2}'`
+   ip=`cat variables | grep ^CONTRL${i}IP \
+   | awk -F= '{print $2}'`
+   echo "CTLIP${i}=$ip" >> $FILE
+   echo "CTLSV${i}=$hn" >> $FILE
+done
+echo >> $FILE
+
+count=`cat variables | grep ^STORAGE[0-9]IP | wc -l`
+for i in $(seq 1 $count); do
+   hn=`cat variables | grep ^STORAGE${i}HN \
+   | awk -F= '{print $2}'`
+   ip=`cat variables | grep ^STORAGE${i}IP \
+   | awk -F= '{print $2}'`
+   echo "STIP${i}=$ip" >> $FILE
+   echo "STSV${i}=$hn" >> $FILE
+done
+echo >> $FILE
+
+count=`cat variables | grep ^COMPUTE[0-9]IP | wc -l`
+for i in $(seq 1 $count); do
+   hn=`cat variables | grep ^COMPUTE${i}HN \
+   | awk -F= '{print $2}'`
+   ip=`cat variables | grep ^COMPUTE${i}IP \
+   | awk -F= '{print $2}'`
+   echo "CMPIP${i}=$ip" >> $FILE
+   echo "CMPSV${i}=$hn" >> $FILE
+done
+echo >> $FILE
+
+count=`cat variables | grep ^NETWORK[0-9]IP | wc -l`
+for i in $(seq 1 $count); do
+   hn=`cat variables | grep ^NETWORK${i}HN \
+   | awk -F= '{print $2}'`
+   ip=`cat variables | grep ^NETWORK${i}IP \
+   | awk -F= '{print $2}'`
+   echo "NETIP${i}=$ip" >> $FILE
+   echo "NETSV${i}=$hn" >> $FILE
+done
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | NAGIOS LOG MANAGER                      |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=nagios-log-manager-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "FILESERVER=$FILESERVER" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+echo "ENABLE_NAGIOS_LM=$ENABLE_NAGIOS_LM" >> $FILE
+echo "NAGIOSLOGMGR=$NAGIOSLOGMGR" >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+echo "RELEASE=$RELEASE" >> $FILE
+echo >> $FILE
+
+echo "EMAIL=$EMAIL" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | SQUID PROXY                             |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=squid-server-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo "PROJECT=$PROJECT" >> $FILE
+echo "USRPASS=$USRPASS" >> $FILE
+echo >> $FILE
+
+echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+echo >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+
+echo "RELEASE=$RELEASE" >> $FILE
+echo "EPEL=$EPEL" >> $FILE
+echo "EMAIL=$EMAIL" >> $FILE
+echo >> $FILE
+
+echo "SQUIDSUBNET=$SQUIDSUBNET" >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | BACKUP                                  |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=amanda-profile
+
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   echo "# --------------------------------" > $FILE
+   echo "#   Hopper installation ${VERSION}" >> $FILE
+   echo "#       $DATE" >> $FILE
+   echo "# --------------------------------" >> $FILE
+   echo "installdir=$installdir" >> $FILE
+   echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+   echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+   echo "STACKNAME=$STACKNAME" >> $FILE
+   echo "NTPSERVER=$NTPSERVER" >> $FILE
+   echo >> $FILE
+
+   echo "RELEASE=$RELEASE" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_AMANDA=$ENABLE_AMANDA" >> $FILE
+   echo "BCKUPSERVER=$BCKUPSERVER" >> $FILE
+   echo "BCKUPSHN=$BCKUPSHN" >> $FILE
+   echo "BACKUPFOLDER=$BACKUPFOLDER" >> $FILE
+   echo "HOLDINGFOLDER=$HOLDINGFOLDER" >> $FILE
+   echo "EMAIL=$EMAIL" >> $FILE
+   echo "S3ACCESSKEY=$S3ACCESSKEY" >> $FILE
+   echo "S3SECRETKEY=$S3SECRETKEY" >> $FILE
+   echo >> $FILE
+
+   cat variables | grep BACKUPLAN | grep -v "#" >> $FILE
+   echo >> $FILE
+
+   echo "ENABLE_NAGIOS=$ENABLE_NAGIOS" >> $FILE
+   if [ x$ENABLE_NAGIOS == xTrue ]; then
+      echo "NAGIOS_PASS=$NAGIOS_PASS" >> $FILE
+      echo "NAGIOSSERVER=$NAGIOSSERVER" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LDAP=$ENABLE_LDAP" >> $FILE
+   if [ x$ENABLE_LDAP == xTrue ]; then
+      echo "LDAPSERVER=$LDAPSERVER" >> $FILE
+      echo "LDAPSERVERIP=$LDAPSERVERIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_DNS=$ENABLE_DNS" >> $FILE
+   if [ x$ENABLE_DNS == xTrue ]; then
+      echo "DNSSERVERIP=$DNSSERVERIP" >> $FILE
+      echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+   if [ x$ENABLE_LOGSTASH == xTrue ]; then
+      echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+      echo >> $FILE
+   fi
+
+   echo "ENABLE_SQUID=$ENABLE_SQUID" >> $FILE
+   echo "ENABLE_CLAMAV=$ENABLE_CLAMAV" >> $FILE
+   echo >> $FILE
+
+   echo "VIP_ADDRESS=$VIPSERVXIP" >> $FILE
+   echo "VIPSERVXHN=$VIPSERVXHN" >> $FILE
+   mv $FILE $DIR
+fi
+
+# +-----------------------------------------+
+# | PASSWORD MANAGEMENT                     |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=keepass-server-profile
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "FILESERVER=$FILESERVER" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | LOGSTASH SERVER                         |
+# +-----------------------------------------+
+DIR=apps
+mkdir -p $DIR
+FILE=logstash-server-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo >> $FILE
+
+echo "ENABLE_LOGSTASH=$ENABLE_LOGSTASH" >> $FILE
+echo "KBPASS=$KBPASS" >> $FILE
+echo "KBUSER=$KBUSER" >> $FILE
+echo "LOGSTASHIP=$LOGSTASHIP" >> $FILE
+echo "KEEPELKLOGS=$KEEPELKLOGS" >> $FILE
+echo "REPORTSYSLOG=$REPORTSYSLOG" >> $FILE
+echo "REPORTVALUES=$REPORTVALUES" >> $FILE
+echo "REPORTHTTP200=$REPORTHTTP200" >> $FILE
+echo "REPORTALLSWIFT=$REPORTALLSWIFT" >> $FILE
+echo >> $FILE
+
+echo "FILESERVER=$FILESERVER" >> $FILE
+echo "HTTPFILES=$HTTPFILES" >> $FILE
+echo >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# +-----------------------------------------+
+# | NTP SERVER                              |
+# +-----------------------------------------+
+DIR=misc
+mkdir -p $DIR
+FILE=ntpserver-profile
+
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "ENABLE_NTP=$ENABLE_NTP" >> $FILE
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo "NTPCONFIGHN=$NTPCONFIGHN" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# ------------------------------------------------------------------
+#       FREE IPA Server
+# ------------------------------------------------------------------
+DIR=apps
+mkdir -p $DIR
+FILE=freeipa-server-profile
+
+DATE=`date +"%a %m %b %Y %Z"`
+echo "# --------------------------------" > $FILE
+echo "#   Hopper installation ${VERSION}" >> $FILE
+echo "#       $DATE" >> $FILE
+echo "# --------------------------------" >> $FILE
+echo "installdir=$installdir" >> $FILE
+echo "OSFLAVOR=$OSFLAVOR" >> $FILE
+echo "ENABLE_ETCHOSTS=$ENABLE_ETCHOSTS" >> $FILE
+echo "STACKNAME=$STACKNAME" >> $FILE
+echo >> $FILE
+
+echo "ENABLE_FREEIPA=$ENABLE_FREEIPA" >> $FILE
+echo "FREEIPAHN=$FREEIPAHN" >> $FILE
+echo "FREEIPAIP=$FREEIPAIP" >> $FILE
+echo "DNSDOMAIN=$DNSDOMAIN" >> $FILE
+echo "FREEIPAREALM=$FREEIPAREALM" >> $FILE
+echo "DIRMANGRASS=$DIRMANGRASS" >> $FILE
+echo "IPAADMINPASS=$IPAADMINPASS" >> $FILE
+echo "DNSFORWARD=$DNSFORWARD" >> $FILE
+echo "DNSFORIP1=$DNSFORIP1" >> $FILE
+echo "DNSFORIP2=$DNSFORIP2" >> $FILE
+echo "REVESSEZONEPROXY=$REVESSEZONEPROXY" >> $FILE
+echo "REVERSEZONENAME=$REVERSEZONENAME" >> $FILE
+echo >> $FILE
+
+echo "NTPSERVER=$NTPSERVER" >> $FILE
+echo >> $FILE
+
+mv $FILE $DIR
+
+# ------------------------------------------------------------------
+#       LOCAL ETCHOSTS
+# ------------------------------------------------------------------
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   misc/generate-hosts
+fi
+
+

@@ -1,0 +1,206 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f profile ]; then
+   echo
+   echo "No profile file found in current directory"
+   echo
+   exit
+else
+   source profile
+fi
+
+# +------------------------------------------+
+# | LOGSTASH                                 |
+# +------------------------------------------+
+# client installation
+# send logstash IP to each server
+# LOGSTASHIP=192.168.122.197
+wget http://$FILESERVER/$HTTPFILES/logstash/logstash-forwarder-0.4.0-1.x86_64.rpm
+
+yum localinstall -y logstash-forwarder-0.4.0-1.x86_64.rpm
+scp -i ssh-key -o StrictHostKeyChecking=no root@$LOGSTASHIP:/etc/pki/tls/certs/logstash-forwarder.crt /etc/pki/tls/certs/
+rm -f logstash-forwarder-0.4.0-1.x86_64.rpm
+
+CFILE=/etc/logstash-forwarder.conf
+sed -i.bak "/\"network\"/a \
+\"servers\": [ \"$LOGSTASHIP:5043\" ], \n\
+\"ssl ca\": \"/etc/pki/tls/certs/logstash-forwarder.crt\", \n\
+\"timeout\": 15" \
+$CFILE
+
+# neutron
+if [ x$NODETYPE == xneutron ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/neutron/*.log\", \n\
+\"/var/log/openvswitch/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"network-neutron\",\"tags\":\"oslofmt\",\"component\":\"neutron\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+# nova
+if [ x$NODETYPE == xnova ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/neutron/*.log\", \n\
+\"/var/log/openvswitch/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"compute-neutron\",\"tags\":\"oslofmt\",\"component\":\"neutron\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/nova/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"compute-nova\",\"tags\":\"oslofmt\",\"component\":\"nova\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+# cinder
+if [ x$NODETYPE == xcinder ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/cinder/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"compute-cinder\",\"tags\":\"oslofmt\",\"component\":\"cinder\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+# api
+if [ x$NODETYPE == xapi ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/neutron/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-neutron\",\"tags\":\"oslofmt\",\"component\":\"neutron\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/nova/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-nova\",\"tags\":\"oslofmt\",\"component\":\"nova\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/httpd/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-httpd\",\"tags\":\"oslofmt\",\"component\":\"httpd\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/rabbitmq/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-rabbit\",\"tags\":\"oslofmt\",\"component\":\"rabbit\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/keystone/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-keystone\",\"tags\":\"oslofmt\",\"component\":\"keystone\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/cinder/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"controller-cinder\",\"tags\":\"oslofmt\",\"component\":\"cinder\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+# swift
+if [ x$NODETYPE == xstorage ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/glance/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"storage-glance\",\"tags\":\"oslofmt\",\"component\":\"glance\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/swift/*.log\" \n\
+], \n\
+\"fields\": { \"type\": \"storage-swift\",\"tags\":\"oslofmt\",\"component\":\"swift\" }\n\
+\}, \n\
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+# haproxy
+if [ x$NODETYPE == xhaproxy ]; then
+sed -i "/\"files\"/a \
+\{ \n\
+\"paths\": [ \n\
+\"/var/log/messages\", \n\
+\"/var/log/secure\" \n\
+], \n\
+\"fields\": { \"type\": \"syslog\" }\n\
+\}" \
+$CFILE
+fi
+
+systemctl restart logstash-forwarder
+chkconfig logstash-forwarder on
+

@@ -1,0 +1,62 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+if [ x$ENABLE_AMANDA != xFalse ]; then
+
+   FILE=/var/lib/amanda/.amandahosts
+   if [ x$ENABLE_DNS == xTrue ]; then
+      fqdn=`dig +short -x $BCKUPSERVER`
+      echo "${fqdn%?} amandabackup amdump"  >> $FILE
+   fi
+
+   echo "${BCKUPSHN} amandabackup amdump"  >> $FILE
+   echo "$BCKUPSERVER amandabackup amdump" >> $FILE
+   echo "::ffff:$BCKUPSERVER amandabackup amdump" >> $FILE
+   echo "$BCKUPSHN amandabackup amdump" >> $FILE
+   echo "::ffff:$BCKUPSHN amandabackup amdump" >> $FILE
+   chown amandabackup.disk $FILE -Rf
+
+   FILE=/etc/amanda/amanda-client.conf
+   echo "conf \"Hopper-Stack-backup\"          #  config name in Amanda server" > $FILE
+   echo "index_server \"$BCKUPSERVER\"     #  amindexd server" >> $FILE
+   echo "tape_server \"$BCKUPSERVER\"      #  amidxtaped server" >> $FILE
+   echo "ssh_keys \"\"                     #  ssh keys file if you use ssh auth" >> $FILE
+   echo "unreserved-tcp-port 1025,65535" >> $FILE
+
+   chown amandabackup.disk $FILE -Rf
+
+   systemctl enable amanda.socket
+   systemctl restart amanda.socket
+fi
+

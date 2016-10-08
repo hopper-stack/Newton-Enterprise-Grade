@@ -1,0 +1,8 @@
+---
+- name: Pre-distribution File Creation
+  hosts: localhost
+  connection: local
+  tasks:
+  - name: Create the Configuration Files
+    shell: cd .. ; ./create-files
+

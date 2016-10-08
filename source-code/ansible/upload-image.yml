@@ -1,0 +1,12 @@
+---
+- name: Upload Image
+  hosts: controller1
+  tasks:
+
+    - name: Upload Cirros Image
+      shell: cd /install_dir; ./upload-image >> /var/log/Hopper-Stack-controller.log 2>&1
+
+    - name: Clear down files
+      shell: cd /install_dir; rm -rf cirros* upload-image; chmod 500 *
+
+

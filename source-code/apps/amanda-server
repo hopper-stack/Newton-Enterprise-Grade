@@ -1,0 +1,307 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f amanda-profile ]; then
+   echo
+   echo " +--------------------------------------------------+"
+   echo " |  No amanda-profile file found in this directory  |"
+   echo " +--------------------------------------------------+"
+   echo
+   exit
+else
+   source amanda-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+cd $installdir
+
+# patch if required
+if [[ ! -f profile || ! -f /etc/yum.repos.d/hopper-repo.repo ]]; then
+   ./patch-client
+
+   # NTP
+   yum install -y chrony
+   systemctl enable chronyd.service
+   if [ x$NTPSERVER != xNone ]; then
+      sed -i "s/^server/# server/g" /etc/chrony.conf
+      echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+      systemctl enable chronyd.service
+      systemctl restart chronyd.service
+      chronyc sources
+      ntpdate -u $NTPSERVER
+   fi
+
+   # openstack repositories
+   yum -y install yum-plugin-priorities
+
+   # firewall
+   systemctl mask firewalld
+   systemctl stop firewalld
+   yum -y install iptables-services
+   systemctl stop  iptables
+   systemctl disable iptables
+   sed -i 's/enforcing/disabled/g' /etc/selinux/config
+   echo 0 > /sys/fs/selinux/enforce
+fi
+
+# +------------------------------------------+
+# | DNS                                      |
+# +------------------------------------------+
+if [ x$ENABLE_DNS == xTrue ]; then
+   cp /etc/resolv.conf /etc/resolv.conf.orig
+   echo "search $DNSDOMAIN" > /etc/resolv.conf
+   echo "nameserver $DNSSERVERIP" >> /etc/resolv.conf
+fi
+
+# +------------------------------------------+
+# | LDAP                                     |
+# +------------------------------------------+
+if [ x$ENABLE_LDAP == xTrue ]; then
+   ./ldap-client
+fi
+
+# +------------------------------------------+
+# | INSTALL BACKUP SERVER                    |
+# +------------------------------------------+
+cd /
+yum -y install amanda*
+cd $installdir
+mkdir -p /etc/amanda/Hopper-Stack-backup
+
+# /etc/amanda/Hopper-Stack-backup/amanda.conf
+FILE=/etc/amanda/Hopper-Stack-backup/amanda.conf
+
+echo "org \"Hopper-Stack-backup\"     # Org name for reports" > $FILE
+echo "mailto \"$EMAIL\"       # Email-to reports" >> $FILE
+echo "netusage 100000 Kbps    # Bandwidth limit, 100M" >> $FILE
+echo " " >> $FILE
+
+echo "dumpcycle 1 week        # Backup cycle 7 days" >> $FILE
+echo "runspercycle 7          # Run 7 times every 7 days" >> $FILE
+echo "tapecycle 15 tapes      # Dump to 15 different tapes during cycle" >> $FILE
+
+echo "changerfile \"/etc/amanda/Hopper-Stack-backup/changer\"   # The tape-changer file" >> $FILE
+echo " " >> $FILE
+
+# at this point it is either True or AWS
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   echo "tpchanger \"chg-disk\"  # The tape-changer glue script" >> $FILE
+   echo "tapedev \"file:/$BACKUPFOLDER/Hopper-Stack-backup/slots\"   # The no-rewind tape device" >> $FILE
+   echo "tapetype HARDDISK                                 # Define the type of tape" >> $FILE
+   echo " " >> $FILE
+   echo "define tapetype HARDDISK {        # Define our tape behaviour" >> $FILE
+   echo "   length 100000 mbytes           # Every tape is 100GB in size" >> $FILE
+   echo "}" >> $FILE
+   echo " " >> $FILE
+else
+   echo "dumpuser \"amandabackup\"" >> $FILE
+   echo " " >> $FILE
+
+   echo "tpchanger \"chg-multi:s3:Hopper-Stack-backup/Hopper-Stack-backup-{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}\"" >> $FILE
+   echo " " >> $FILE
+
+   echo "device_property \"S3_ACCESS_KEY\" \"$S3ACCESSKEY\"" >> $FILE
+   echo "device_property \"S3_SECRET_KEY\" \"$S3SECRETKEY\"" >> $FILE
+   echo "device_property \"S3_SSL\" \"YES\"" >> $FILE
+   echo " " >> $FILE
+   echo "tapetype S3" >> $FILE
+   echo "define tapetype S3 {" >> $FILE
+   echo "    comment \"S3 Bucket\"" >> $FILE
+   echo "    length 10240 gigabytes # Bucket size 10TB" >> $FILE
+   echo "}" >> $FILE
+fi
+
+echo "infofile \"/etc/amanda/Hopper-Stack-backup/curinfo\"   # Database directory" >> $FILE
+echo "logdir \"/etc/amanda/Hopper-Stack-backup/logs\"        # Log directory" >> $FILE
+echo "indexdir \"/etc/amanda/Hopper-Stack-backup/index\"     # Index directory" >> $FILE
+echo " " >> $FILE
+
+echo "amrecover_changer \"changer\"     # Changer for amrecover" >> $FILE
+echo " " >> $FILE
+
+echo "define dumptype global {      # The global dump definition" >> $FILE
+echo "   maxdumps 2                 # The maximum number of backups run in parallel" >> $FILE
+echo "   estimate calcsize          # Estimate the backup size before dump" >> $FILE
+echo "   holdingdisk yes            # Dump to temp disk before backup to tape" >> $FILE
+echo "   index yes                  # Generate index. For restoration usage" >> $FILE
+echo "}" >> $FILE
+echo " " >> $FILE
+
+echo "define dumptype root-tar {    # How to dump root's directory" >> $FILE
+echo "   global                     # Include global (as above)" >> $FILE
+echo "   program \"GNUTAR\"         # Program name for compress" >> $FILE
+echo "   comment \"root dumped with tar\"" >> $FILE
+echo "   compress none              # No compress" >> $FILE
+echo "   index                      # Index this dump" >> $FILE
+echo "   priority low               # Priority level" >> $FILE
+echo "}" >> $FILE
+echo " " >> $FILE
+
+echo "define dumptype var-tar {                  # How to dump var directory" >> $FILE
+echo "   root-tar                                   # Include root-tar (as above)" >> $FILE
+echo "   comment \"var dumped with tar\"" >> $FILE
+echo "   priority medium                            # Priority level" >> $FILE
+echo "}" >> $FILE
+echo " " >> $FILE
+
+echo "define dumptype comp-var-tar {   # Dump & compressed var directory" >> $FILE
+echo "   var-tar                       # Include var-tar (as above)" >> $FILE
+echo "   compress client fast          # Compress in client side with less CPU" >> $FILE
+echo "}" >> $FILE
+echo "" >> $FILE
+
+echo "holdingdisk hd1 {" >> $FILE
+echo "   directory \"$HOLDINGFOLDER\"" >> $FILE
+echo "   use 100 mbytes" >> $FILE
+echo "   chunksize 1 mbyte" >> $FILE
+echo "}" >> $FILE
+echo "" >> $FILE
+
+# slots
+mkdir -p $BACKUPFOLDER/Hopper-Stack-backup/slots
+chown amandabackup.disk $BACKUPFOLDER -Rf
+chown amandabackup.disk /etc/amanda/Hopper-Stack-backup -Rf
+
+# holding area
+mkdir -p $HOLDINGFOLDER
+chown amandabackup.disk $HOLDINGFOLDER -Rf
+
+echo "for n in \`seq 1 15\`; do mkdir $BACKUPFOLDER/Hopper-Stack-backup/slots/slot\${n}; done" > /tmp/ambfile.sh
+echo "for n in \`seq 1 15\` ; do amlabel Hopper-Stack-backup Hopper-Stack-backup-\${n} slot \${n}; done" >> /tmp/ambfile.sh
+
+echo "mkdir /etc/amanda/Hopper-Stack-backup/curinfo" >> /tmp/ambfile.sh
+echo "mkdir /etc/amanda/Hopper-Stack-backup/logs" >> /tmp/ambfile.sh
+echo "mkdir /etc/amanda/Hopper-Stack-backup/index" >> /tmp/ambfile.sh
+chmod 755 /tmp/ambfile.sh
+su - amandabackup -c /tmp/ambfile.sh
+rm -f /tmp/ambfile.sh
+
+# /etc/amanda/Hopper-Stack-backup/disklist 
+FILE=/etc/amanda/Hopper-Stack-backup/disklist
+cat /dev/null > $FILE
+declare -a arr1=(`cat amanda-profile | grep BACKUPLAN | grep -v $BCKUPSERVER`)
+for i in ${arr1[@]}; do
+   INST=`echo $i | awk -F= '{print $2}' | awk -F: '{print $1}'`
+   declare -a arr2=(`echo $i | awk -F: '{print $2}' | sed "s/,/ /"`)
+   for j in ${arr2[@]}; do
+     echo "$INST $j  root-tar" >> $FILE
+   done
+done
+echo "$BCKUPSHN /etc  root-tar" >> $FILE
+chown amandabackup.disk $FILE -Rf
+
+# /var/lib/amanda/.amandahosts 
+FILE=/var/lib/amanda/.amandahosts
+cat /dev/null > $FILE
+declare -a arr1=(`cat amanda-profile | grep BACKUPLAN`)
+for i in ${arr1[@]}; do
+   INST=`echo $i | awk -F= '{print $2}' | awk -F: '{print $1}'`
+   declare -a arr2=(`echo $i | awk -F: '{print $2}' | sed "s/,/ /"`)
+   for j in ${arr2[@]}; do
+     echo "::ffff:$INST root amindexd amidxtaped" >> /tmp/ambfile.ksh
+   done
+done
+cat /tmp/ambfile.ksh | uniq >> $FILE
+rm -rf /tmp/ambfile.ksh
+echo "::ffff:$BCKUPSERVER root amindexd amidxtaped" >> $FILE
+
+declare -a arr1=(`cat amanda-profile | grep BACKUPLAN`)
+for i in ${arr1[@]}; do
+   INST=`echo $i | awk -F= '{print $2}' | awk -F: '{print $1}'`
+   declare -a arr2=(`echo $i | awk -F: '{print $2}' | sed "s/,/ /"`)
+   for j in ${arr2[@]}; do
+     echo "$INST root amindexd amidxtaped" >> /tmp/ambfile.ksh
+   done
+done
+cat /tmp/ambfile.ksh | uniq >> $FILE
+rm -rf /tmp/ambfile.ksh
+chown amandabackup.disk $FILE -Rf
+echo "amandahost root amindexd amidxtaped" >> $FILE
+echo "$BCKUPSERVER root amindexd amidxtaped" >> $FILE
+bhstnm=`hostname`
+echo "$bhstnm root amindexd amidxtaped" >> $FILE
+echo "$BCKUPSHN amandabackup amdump" >> $FILE
+
+# update /etc/hosts
+chkhosts=`cat /etc/hosts | grep ^$BCKUPSERVER | awk '{print $1}'`
+if [ x$chkhosts == x ]; then
+   echo "$BCKUPSERVER           amandahost" >> /etc/hosts
+else
+   sed -i "/^$BCKUPSERVER/ s/$/ amandahost/" /etc/hosts
+fi
+
+systemctl enable amanda.socket
+systemctl restart amanda.socket
+
+# +------------------------------------------+
+# | FIX                                      |
+# +------------------------------------------+
+cat /usr/lib/systemd/system/amanda@.service > /etc/systemd/system/amanda@.service
+cd /etc/systemd/system/
+cat amanda@.service | sed -i "s/amdump /amdump amindexd amidxtaped/" amanda@.service
+
+systemctl enable amanda.socket
+systemctl restart amanda.socket
+
+# cron
+echo "45 0 * * * su - amandabackup -c \"amdump Hopper-Stack-backup\"" >> /var/spool/cron/root
+systemctl reload crond.service
+
+# +------------------------------------------+
+# | ANTI-VIRUS                               |
+# +------------------------------------------+
+cd $installdir
+if [ x$ENABLE_CLAMAV == x"True" ]; then
+   ./clamav-server
+fi
+
+clear
+
+echo " +------------------------------------------+"
+echo " | CHECK BACKUP                             |"
+echo " +------------------------------------------+"
+su - amandabackup -c "amcheck -c Hopper-Stack-backup"
+
+echo " +------------------------------------------+"
+echo " | RUN BACKUP                               |"
+echo " +------------------------------------------+"
+echo " su - amandabackup -c \"amdump Hopper-Stack-backup\""
+
+echo " +------------------------------------------+"
+echo " | RECOVER BACKUP                           |"
+echo " +------------------------------------------+"
+echo " amrecover Hopper-Stack-backup -s $BCKUPSERVER"
+
+#echo " +------------------------------------------+"
+#echo " | BACKUP FILES                             |"
+#echo " +------------------------------------------+"
+#echo "    /etc/amanda/Hopper-Stack-backup/disklist"
+#echo "    /var/lib/amanda/.amandahosts"
+#echo
+

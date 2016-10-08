@@ -1,0 +1,84 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f squid-server-profile ]; then
+   echo
+   echo " +--------------------------------------------------------+"
+   echo " |  No squid-server-profile file found in this directory  |"
+   echo " +--------------------------------------------------------+"
+   echo
+   exit
+else
+   source squid-server-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# NTP
+yum install -y chrony
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# openstack repositories
+yum -y install yum-plugin-priorities
+yum -y upgrade
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# squid
+yum install -y squid
+
+# configure
+sed -i -e "s/^#cache_dir ufs/cache_dir ufs/" /etc/squid/squid.conf
+
+declare -a arr2=(`cat $installdir/squid-server-profile | \
+egrep "^SQUIDSUBNET" |  awk -F= '{print $2}' | sort | uniq`)
+for j in ${arr2[@]}; do
+  sed -i "/^acl CONNECT/a acl LAN src $j" /etc/squid/squid.conf
+done
+
+# all signature file
+sed -i "/^acl LAN/a acl clamav-sig url_regex http://[^/]*\\\.database\\\.clamav\\\.com\\
+cache allow clamav-sig" /etc/squid/squid.conf
+
+systemctl enable squid
+systemctl start squid
+

@@ -1,0 +1,164 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f dns-server-profile ]; then
+   echo
+   echo " +------------------------------------------------------+"
+   echo " |  No dns-server-profile file found in this directory  |"
+   echo " +------------------------------------------------------+"
+   echo
+   exit
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+installdir=`cat dns-server-profile | grep installdir  | cut -f2 -d=`
+
+if [[ ! -f profile || ! -f /etc/yum.repos.d/hopper-repo.repo ]]; then
+   ./patch-client
+fi
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+yum -y install bind bind-utils
+
+THIS_HOST_NAME=`cat dns-server-profile | grep THIS_HOST_NAME | awk -F= '{print $2}'`
+THIS_HOST_IP=`cat dns-server-profile | grep THIS_HOST_IP | awk -F= '{print $2}'`
+DNSDOMAIN=`cat dns-server-profile | grep DNSDOMAIN | awk -F= '{print $2}'`
+REVERSE=`echo $THIS_HOST_IP| rev | cut -d. -f2- | rev | awk -F. -vOFS=. '{print $3,$2,$1}'`
+
+DNSNET=`echo $THIS_HOST_IP| rev | cut -d. -f2- | rev`
+DNSNET=${DNSNET}".0\/24;"
+
+sed -i 's/listen-on port 53/#listen-on port 53/' /etc/named.conf
+sed -i 's/listen-on-v6 port 53/#listen-on-v6 port 53/' /etc/named.conf
+sed -i "s/localhost;/localhost;$DNSNET/" /etc/named.conf
+sed -i "s/dnssec-enable yes/dnssec-enable no/" /etc/named.conf
+sed -i "s/dnssec-validation yes/dnssec-validation no/" /etc/named.conf
+sed -i "/allow-query/a forwarders { 8.8.8.8; };" /etc/named.conf
+
+# zones
+echo ""  >> /etc/named.conf
+echo "zone \"$DNSDOMAIN\" IN {" >> /etc/named.conf
+echo "type master;" >> /etc/named.conf
+echo "file \"fwd.${DNSDOMAIN}.db\";" >> /etc/named.conf
+echo "allow-update { none; };" >> /etc/named.conf
+echo "};" >> /etc/named.conf
+echo ""  >> /etc/named.conf
+
+echo "zone \"${REVERSE}.in-addr.arpa\" IN {"  >> /etc/named.conf
+echo "type master;"  >> /etc/named.conf
+echo "file \"${REVERSE}.db\";"  >> /etc/named.conf
+echo "allow-update { none; };"  >> /etc/named.conf
+echo "};"  >> /etc/named.conf
+echo ""  >> /etc/named.conf
+
+# forward zone 
+FILE=/var/named/fwd.${DNSDOMAIN}.db
+netid=`echo $THIS_HOST_IP| rev | cut -d. -f2- | rev`
+ipfield=`cat dns-server-profile | grep THIS_HOST_IP | cut -d. -f 4`
+
+echo "\$TTL 86400" > ${FILE}
+echo "@   IN  SOA     ${THIS_HOST_NAME}.${DNSDOMAIN}. root.${DNSDOMAIN}. (" >> ${FILE}
+echo "2014112511  ;Serial" >> ${FILE}
+echo "3600        ;Refresh" >> ${FILE}
+echo "1800        ;Retry" >> ${FILE}
+echo "604800      ;Expire" >> ${FILE}
+echo "86400       ;Minimum TTL" >> ${FILE}
+echo ")" >> ${FILE}
+echo ";Name Server Information" >> ${FILE}
+echo "@      IN  NS      ${THIS_HOST_NAME}.${DNSDOMAIN}." >> ${FILE}
+echo ";IP address of Name Server" >> ${FILE}
+echo "${THIS_HOST_NAME} IN  A       ${THIS_HOST_IP}" >> ${FILE}
+echo "" >> ${FILE}
+
+cat dns-server-profile | grep ^$netid | grep -v THIS_HOST_IP \
+| grep -v ${THIS_HOST_NAME} \
+| grep -v NETCONFIG > /tmp/dnssfile.lis
+
+declare -a arr1=(`cat /tmp/dnssfile.lis | cut -f1 -d' '`)
+for i in ${arr1[@]}; do
+  hostn=`cat /tmp/dnssfile.lis | grep "$i " | cut -f2 -d' '`
+  echo "$hostn  IN  A           ${i}" >> ${FILE}
+done
+
+echo "" >> ${FILE}
+
+# reverse zone file
+FILE=/var/named/${REVERSE}.db
+
+echo "\$TTL 86400" > ${FILE}
+echo "@   IN  SOA     ${THIS_HOST_NAME}.${DNSDOMAIN}. root.${DNSDOMAIN}. (" >> ${FILE}
+echo "2014112511  ;Serial" >> ${FILE}
+echo "3600        ;Refresh" >> ${FILE}
+echo "1800        ;Retry" >> ${FILE}
+echo "604800      ;Expire" >> ${FILE}
+echo "86400       ;Minimum TTL" >> ${FILE}
+echo ")" >> ${FILE}
+echo ";Name Server Information" >> ${FILE}
+echo "@ IN  NS      ${THIS_HOST_NAME}.${DNSDOMAIN}." >> ${FILE}
+echo ";Reverse lookup for Name Server" >> ${FILE}
+echo "$ipfield        IN  PTR     ${THIS_HOST_NAME}.${DNSDOMAIN}." >> ${FILE}
+echo "" >> ${FILE}
+
+netid=`echo $THIS_HOST_IP| rev | cut -d. -f2- | rev`
+ipfield=`cat dns-server-profile | grep THIS_HOST_IP | cut -d. -f 4`
+
+cat dns-server-profile | grep ^$netid | grep -v THIS_HOST_IP \
+| grep -v ${THIS_HOST_NAME} \
+| grep -v NETCONFIG > /tmp/dnssfile.lis
+
+declare -a arr1=(`cat /tmp/dnssfile.lis | cut -f1 -d' '`)
+for i in ${arr1[@]}; do
+  hostn=`cat /tmp/dnssfile.lis | grep "$i " | cut -f2 -d' '`
+  ip=`echo $i | cut -d. -f 4`
+  echo "$ip  IN  PTR           ${hostn}.${DNSDOMAIN}." >> $FILE
+done
+echo "" >> ${FILE}
+
+# /etc/resolv.conf
+cp /etc/resolv.conf /etc/resolv.conf.orig
+echo "search $DNSDOMAIN" > /etc/resolv.conf
+echo "nameserver $THIS_HOST_IP" >> /etc/resolv.conf
+
+firewall-cmd --permanent --add-service dns
+firewall-cmd --reload
+
+systemctl enable named.service
+systemctl restart named.service
+

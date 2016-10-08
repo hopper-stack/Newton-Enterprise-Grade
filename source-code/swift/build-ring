@@ -1,0 +1,141 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+echo "" > /tmp/yes
+echo "" > /tmp/yes
+ssh-keygen -N "" < /tmp/yes
+
+source admin-openrc.sh
+cd /etc/swift
+
+# create rings
+swift-ring-builder account.builder create 10 3 1
+swift-ring-builder container.builder create 10 3 1
+swift-ring-builder object.builder create 10 3 1
+
+# add storage 
+count=1
+
+declare -a arr2=(`cat $installdir/profile | \
+egrep "SWIFT_DISK" | awk -F= '{print $2}'`)
+
+for j in ${arr2[@]}; do
+   node=`echo $j | awk -F: '{print $1}'`
+   disk=`echo $j | awk -F: '{print $3}'`
+   repn=`echo $j | awk -F: '{print $2}'`
+
+   swift-ring-builder account.builder add --region 1 --zone $count --ip $node --port 6002 --device $disk --weight 100
+   swift-ring-builder account.builder
+   swift-ring-builder account.builder set_info R${node} R${repn}
+   let count=count+1
+
+   swift-ring-builder container.builder add --region 1 --zone $count --ip $node --port 6001 --device $disk --weight 100
+   swift-ring-builder container.builder
+   swift-ring-builder container.builder set_info R${node} R${repn}
+   let count=count+1
+
+   swift-ring-builder object.builder add --region 1 --zone $count --ip $node --port 6000 --device $disk --weight 100
+   swift-ring-builder object.builder
+   swift-ring-builder object.builder set_info R${node} R${repn}
+   let count=count+1
+done
+
+swift-ring-builder account.builder rebalance
+swift-ring-builder container.builder rebalance
+swift-ring-builder object.builder rebalance
+
+swift-ring-builder account.builder write_ring
+swift-ring-builder container.builder write_ring
+swift-ring-builder object.builder write_ring
+
+cd $installdir
+
+# copy ring 
+mkdir /tmp/swiftconf
+cp /etc/swift/*.gz /tmp/swiftconf
+cp /etc/swift/swift.conf /tmp/swiftconf
+cp /etc/swift/*.builder /tmp/swiftconf
+
+clear
+declare -a arr2=(`cat $installdir/profile | egrep "^CONTROLLER_IP" | awk -F= '{print $2}'`)
+for j in ${arr2[@]}; do
+   echo "  $j"
+   scp -i $installdir/ssh-key -o StrictHostKeyChecking=no /tmp/swiftconf/* root@$j:/etc/swift
+   sleep 1
+done
+
+cat $installdir/profile | egrep "^SWIFT_DISK" | grep -v $STORAGE_NODE | awk -F= '{print $2}' | awk -F: '{print $1}' | sort | uniq > /tmp/swftfile.lis
+declare -a arr2=(`cat /tmp/swftfile.lis`)
+for j in ${arr2[@]}; do
+    echo "  $j"
+    scp -i $installdir/ssh-key -o StrictHostKeyChecking=no /tmp/swiftconf/* root@$j:/etc/swift > /dev/null 2>&1
+    sleep 1
+done
+
+rm -rf /tmp/swiftconf
+
+# start-up
+echo "" > /tmp/services.list
+
+for service in account-auditor account-reaper account-replicator account container-auditor container-replicator container-updater container object-auditor object-replicator object-updater object
+do
+   echo "systemctl enable openstack-swift-$service" >> /tmp/services.list
+   echo "systemctl restart openstack-swift-$service" >> /tmp/services.list
+done
+
+chmod 755 /tmp/services.list
+/tmp/services.list
+
+sleep 5
+declare -a arr2=(`cat  $installdir/profile | \
+egrep "^CONTROLLER_IP" | awk -F= '{print $2}'`)
+for j in ${arr2[@]}; do
+   echo "  $j"
+   ssh -i $installdir/ssh-key -o StrictHostKeyChecking=no root@$j 'chown -R swift:swift /etc/swift; systemctl restart openstack-swift-proxy.service memcached.service httpd.service'
+   sleep 1
+done
+
+declare -a arr2=(`cat /tmp/swftfile.lis`)
+for j in ${arr2[@]}; do
+   echo "  $j"
+   scp -i $installdir/ssh-key -o StrictHostKeyChecking=no /tmp/services.list root@$j:/tmp
+   ssh -i $installdir/ssh-key -o StrictHostKeyChecking=no root@$j 'chown -R swift:swift /etc/swift; chmod 755 /tmp/services.list; /tmp/services.list'
+   sleep 1
+done
+
+rm -f /tmp/services.list
+
+echo "End build-ring"
+

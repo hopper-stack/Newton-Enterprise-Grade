@@ -1,0 +1,17 @@
+---
+- name: Apply HA Proxy Repository
+  hosts: haproxy
+  tasks:
+
+    - name: Disable Repository -- base
+      command: yum-config-manager --disable base
+
+    - name: Disable Repository -- extras
+      command: yum-config-manager --disable extras
+
+    - name: Disable Repository -- updates
+      command: yum-config-manager --disable updates
+
+    - name: Copy Repository File
+      copy: src=hopper-repo.repo dest=/etc/yum.repos.d
+

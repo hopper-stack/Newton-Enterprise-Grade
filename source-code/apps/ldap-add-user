@@ -1,0 +1,89 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+               ACCOUNT=hsuser
+                  XUID=1011
+                  XGID=1011
+# +------------------------------------------+
+
+if [ ! -f ldap-server-profile ]; then
+   echo
+   echo " +-------------------------------------------------------+"
+   echo " |  No ldap-server-profile file found in this directory  |"
+   echo " +-------------------------------------------------------+"
+   echo
+   exit
+else
+   source ldap-server-profile
+fi
+cd $installdir
+source ldap-server-profile
+source admin-openrc.sh
+
+if [[ x$1 == x || x$2 == x || x$3 == x ]]; then
+   echo
+   echo " Usage ./ldap-add-user <user> <uid> <gui>"
+   echo
+   exit
+else
+   ACCOUNT=$1
+   XUID=$2
+   XGID=$3
+fi
+
+# parameters
+echo $DOMAIN
+BASEDN=""
+
+arr1=$(echo $DOMAIN | tr "." "\n")
+for i in ${arr1[@]}; do
+   BASEDN="${BASEDN}dc=$i,"
+done
+BASEDN=`echo "${BASEDN%?}"`
+echo $BASEDN
+
+# account
+echo -n "Enter $ACCOUNT user password: "
+read testpass
+TESTPW=`slappasswd -s $testpass`
+
+echo "dn: uid=$ACCOUNT,ou=People,$BASEDN" > ldapuser.ldif 
+echo "objectClass: inetOrgPerson" >> ldapuser.ldif 
+echo "objectClass: posixAccount" >> ldapuser.ldif 
+echo "objectClass: shadowAccount" >> ldapuser.ldif 
+echo "cn: $ACCOUNT" >> ldapuser.ldif 
+echo "sn: Linux" >> ldapuser.ldif 
+echo "userPassword: $TESTPW" >> ldapuser.ldif 
+echo "loginShell: /bin/bash" >> ldapuser.ldif 
+echo "uidNumber: $XUID" >> ldapuser.ldif 
+echo "gidNumber: $XGID" >> ldapuser.ldif 
+echo "homeDirectory: /home/$ACCOUNT" >> ldapuser.ldif 
+echo "" >> ldapuser.ldif 
+echo "dn: cn=$ACCOUNT,ou=Group,$BASEDN" >> ldapuser.ldif 
+echo "objectClass: posixGroup" >> ldapuser.ldif 
+echo "cn: $ACCOUNT" >> ldapuser.ldif 
+echo "gidNumber: $XGID" >> ldapuser.ldif 
+echo "memberUid: $ACCOUNT" >> ldapuser.ldif 
+
+ldapadd -x -D cn=Manager,$BASEDN -W -f ldapuser.ldif 
+

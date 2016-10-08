@@ -1,0 +1,465 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# credential
+unset OS_TOKEN
+unset OS_URL
+unset OS_IDENTITY_API_VERSION
+
+echo "export OS_PROJECT_DOMAIN_NAME=default" > admin-openrc.sh
+echo "export OS_USER_DOMAIN_NAME=default" >> admin-openrc.sh
+echo "export OS_PROJECT_NAME=admin" >> admin-openrc.sh
+echo "export OS_USERNAME=admin" >> admin-openrc.sh
+echo "export OS_PASSWORD=$ADMIN_PASS" >> admin-openrc.sh
+echo "export OS_AUTH_URL=http://$VIPSERVXHN:35357/v3" >> admin-openrc.sh
+echo "export OS_IDENTITY_API_VERSION=3" >> admin-openrc.sh
+
+echo "export OS_PROJECT_DOMAIN_NAME=default" > $PROJECT-openrc.sh
+echo "export OS_USER_DOMAIN_NAME=default" >> $PROJECT-openrc.sh
+echo "export OS_PROJECT_NAME=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_USERNAME=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_PASSWORD=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_AUTH_URL=http://$VIPSERVXHN:5000/v3" >> $PROJECT-openrc.sh
+echo "export OS_IDENTITY_API_VERSION=3" >> $PROJECT-openrc.sh
+
+echo "export OS_IMAGE_API_VERSION=2" >> admin-openrc.sh
+echo "export OS_IMAGE_API_VERSION=2" >> $PROJECT-openrc.sh
+
+source admin-openrc.sh
+
+# patch system
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum install -y iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# +------------------------------------------+
+# | INSTALL PACKAGES                         |
+# +------------------------------------------+
+yum install -y yum-plugin-priorities
+yum install -y crudini
+
+yum install -y python-openstackclient
+
+yum install -y openstack-glance
+
+yum install -y openstack-swift-account
+yum install -y openstack-swift-container
+yum install -y openstack-swift-object
+yum install -y xfsprogs
+yum install -y rsync
+
+yum install -y memcached
+yum install -y xinetd
+
+# fix for keystone
+yum install -y openstack-keystone
+
+# manila
+yum install -y openstack-neutron
+yum install -y openstack-neutron-linuxbridge
+yum install -y ebtables
+yum install -y openstack-manila-share
+yum install -y python2-PyMySQL
+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   yum install -y percona-nagios-plugins
+   yum install -y nrpe
+   yum install -y nagios-plugins-all
+   yum install -y openssl
+fi
+
+if [[ x$ENABLE_AMANDA == xTrue && ! -f /var/lib/amanda/.amandahosts ]]; then
+   yum install -y amanda amanda-client
+fi
+
+# +------------------------------------------+
+# | SWIFT                                    |
+# +------------------------------------------+
+declare -a arr1=(`cat $installdir/profile | grep SWIFT_DISK | grep $STORAGE_NODE | awk -F= '{print $2}' | awk -F: '{print$3}'`)
+for i in ${arr1[@]}; do
+   mkfs.xfs -f /dev/${i}
+   mkdir -p /srv/node/${i}
+   echo "/dev/${i} /srv/node/${i} xfs noatime,nodiratime,nobarrier,logbufs=8 0 2" >> /etc/fstab
+done
+mount -a
+df -h
+
+# /etc/rsyncd.conf
+CFILE=/etc/rsyncd.conf
+
+# [DEFAULT]
+crudini --set $CFILE "" uid swift
+crudini --set $CFILE "" gid swift
+crudini --set $CFILE "" "log file" /var/log/rsyncd.log
+crudini --set $CFILE "" "pid file" /var/run/rsyncd.pid
+crudini --set $CFILE "" address $REPLICATION_NETWORK
+
+# [account]
+crudini --set $CFILE account "max connections" 2
+crudini --set $CFILE account path /srv/node/
+crudini --set $CFILE account "read only" false
+crudini --set $CFILE account "lock file" /var/lock/account.lock
+
+# [container]
+crudini --set $CFILE container "max connections" 2
+crudini --set $CFILE container path /srv/node/
+crudini --set $CFILE container "read only" false
+crudini --set $CFILE container "lock file" /var/lock/container.lock
+
+# [object]
+crudini --set $CFILE object "max connections" 2
+crudini --set $CFILE object path /srv/node/
+crudini --set $CFILE object "read only" false
+crudini --set $CFILE object "lock file" /var/lock/object.lock
+
+# fix
+sed -i.bak "/ConditionPathExists/a \
+After=network.target" /usr/lib/systemd/system/rsyncd.service
+
+for svc in rsyncd ; do
+   systemctl enable $svc
+   systemctl restart $svc
+done
+
+# downloads
+cd /etc/swift
+
+curl -o /etc/swift/account-server.conf \
+http://$FILESERVER/$HTTPFILES/swift/account-server.conf
+sleep 1
+curl -o /etc/swift/container-server.conf \
+http://$FILESERVER/$HTTPFILES/swift/container-server.conf
+sleep 1
+curl -o /etc/swift/object-server.conf \
+http://$FILESERVER/$HTTPFILES/swift/object-server.conf
+sleep 1
+curl -o /etc/swift/swift.conf \
+http://$FILESERVER/$HTTPFILES/swift/swift.conf
+sleep 1
+
+# +------------------------------------------+
+# | SWIFT                                    |
+# +------------------------------------------+
+# |  modify swift configuration files        |
+# |      Account builder: 6002               |
+# |      Container builder: 6001             |
+# |      Object builder: 6000                |
+# +------------------------------------------+
+CFILE=/etc/swift/account-server.conf
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT bind_ip 0.0.0.0 
+crudini --set $CFILE DEFAULT bind_port 6002
+crudini --set $CFILE DEFAULT user swift
+crudini --set $CFILE DEFAULT swift_dir /etc/swift
+crudini --set $CFILE DEFAULT devices /srv/node
+crudini --set $CFILE DEFAULT mount_check true
+
+# [pipeline:main]
+crudini --set $CFILE pipeline:main pipeline "healthcheck recon account-server"
+
+# [filter:recon]
+crudini --set $CFILE filter:recon use egg:swift#recon
+crudini --set $CFILE filter:recon recon_cache_path /var/cache/swift
+
+# /etc/swift/container-server.conf
+CFILE=/etc/swift/container-server.conf
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT bind_ip 0.0.0.0
+crudini --set $CFILE DEFAULT bind_port 6001
+crudini --set $CFILE DEFAULT user swift
+crudini --set $CFILE DEFAULT swift_dir /etc/swift
+crudini --set $CFILE DEFAULT devices /srv/node
+crudini --set $CFILE DEFAULT mount_check true
+
+# [pipeline:main]
+crudini --set $CFILE pipeline:main pipeline "healthcheck recon container-server"
+
+# [filter:recon]
+crudini --set $CFILE filter:recon use egg:swift#recon
+crudini --set $CFILE filter:recon recon_cache_path /var/cache/swift
+
+# /etc/swift/object-server.conf
+CFILE=/etc/swift/object-server.conf
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT bind_ip 0.0.0.0
+crudini --set $CFILE DEFAULT bind_port 6000
+crudini --set $CFILE DEFAULT user swift
+crudini --set $CFILE DEFAULT swift_dir /etc/swift
+crudini --set $CFILE DEFAULT devices /srv/node
+crudini --set $CFILE DEFAULT mount_check true
+
+# [pipeline:main]
+crudini --set $CFILE pipeline:main pipeline "healthcheck recon object-server"
+
+# [filter:recon]
+crudini --set $CFILE filter:recon use egg:swift#recon
+crudini --set $CFILE filter:recon recon_cache_path /var/cache/swift
+crudini --set $CFILE filter:recon recon_lock_path /var/lock
+
+cd $installdir
+
+# swift.conf
+CFILE=/etc/swift/swift.conf
+
+# [swift-hash]
+crudini --set $CFILE swift-hash swift_hash_path_suffix 6738922
+crudini --set $CFILE swift-hash swift_hash_path_prefix 4656514
+
+# [storage-policy:0]
+crudini --set $CFILE storage-policy:0 name Policy-0
+crudini --set $CFILE storage-policy:0 default yes
+
+chown -R swift:swift /srv/node
+mkdir -p /var/cache/swift
+chown -R swift:swift /var/cache/swift
+chown -R swift:swift /etc/swift
+
+# start services 
+for service in openstack-swift-account-auditor openstack-swift-account-reaper openstack-swift-account-replicator openstack-swift-account openstack-swift-container-auditor openstack-swift-container-replicator openstack-swift-container-updater openstack-swift-container openstack-swift-object-auditor openstack-swift-object-replicator openstack-swift-object-updater openstack-swift-object
+do
+   systemctl enable $service
+   systemctl restart $service
+done
+
+# +------------------------------------------+
+# | GLANCE                                   |
+# +------------------------------------------+
+CFILE=/etc/glance/glance-api.conf
+
+# [database]
+crudini --set $CFILE database connection mysql+pymysql://glance:$SERVICE_PASS@$VIPSERVXHN/glance
+
+# [keystone authtoken]
+crudini --del $CFILE keystone_authtoken
+crudini --set $CFILE keystone_authtoken auth_uri http://$VIPSERVXHN:5000
+crudini --set $CFILE keystone_authtoken auth_url http://$VIPSERVXHN:35357
+crudini --set $CFILE keystone_authtoken memcached_servers $CONTROLLER_IPS:11211,$SECONDARY_CNTL_IPS:11211,$TERTIARY_CNTRL_IPS:11211
+crudini --set $CFILE keystone_authtoken auth_type password
+crudini --set $CFILE keystone_authtoken project_domain_name default
+crudini --set $CFILE keystone_authtoken user_domain_name default
+crudini --set $CFILE keystone_authtoken project_name service
+crudini --set $CFILE keystone_authtoken username glance
+crudini --set $CFILE keystone_authtoken password $SERVICE_PASS
+
+# [paste_deploy]
+crudini --set $CFILE paste_deploy flavor keystone
+
+# [glance_store]
+#crudini --set $CFILE glance_store stores file,http
+#crudini --set $CFILE glance_store default_store file
+#crudini --set $CFILE glance_store filesystem_store_datadir /var/lib/glance/images/
+
+#crudini --set $CFILE glance_store stores swift
+#crudini --set $CFILE glance_store swift_store_config_file /etc/glance/glance-swift-store.conf
+#crudini --set $CFILE glance_store default_swift_reference ref1
+#crudini --set $CFILE glance_store swift_store_create_container_on_put True
+
+#echo "[ref1]" > /etc/glance/glance-swift-store.conf
+#echo "auth_version = 3" >> /etc/glance/glance-swift-store.conf
+#echo "project_domain_id = default" >> /etc/glance/glance-swift-store.conf
+#echo "user_domain_id = default" >> /etc/glance/glance-swift-store.conf
+#echo "auth_address = http://$VIPSERVXHN:5000/v3" >> /etc/glance/glance-swift-store.conf
+#echo "key = $SERVICE_PASS" >> /etc/glance/glance-swift-store.conf
+#echo "user = service:glance" >> /etc/glance/glance-swift-store.conf
+
+crudini --set $CFILE glance_store default_store swift
+crudini --set $CFILE glance_store swift_store_container glance
+crudini --set $CFILE glance_store swift_store_multi_tenant True
+crudini --set $CFILE glance_store stores glance.store.swift.Store
+crudini --set $CFILE glance_store swift_store_auth_version 3
+crudini --set $CFILE glance_store swift_store_auth_address http://$VIPSERVXHN:5000/v3
+crudini --set $CFILE glance_store swift_store_user service:swift
+crudini --set $CFILE glance_store swift_store_key $SERVICE_PASS
+crudini --set $CFILE glance_store swift_store_create_container_on_put True
+crudini --set $CFILE glance_store swift_store_large_object_size 5120
+crudini --set $CFILE glance_store swift_store_large_object_chunk_size 200
+crudini --set $CFILE glance_store swift_enable_snet False
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT registry_host $VIPSERVXHN
+
+service openstack-glance-api restart
+
+# /etc/glance/glance-registry.conf
+CFILE=/etc/glance/glance-registry.conf
+
+# [database]
+crudini --set $CFILE database connection mysql+pymysql://glance:$SERVICE_PASS@$VIPSERVXHN/glance
+
+# [keystone_authtoken]
+crudini --del $CFILE keystone_authtoken
+crudini --set $CFILE keystone_authtoken auth_uri http://$VIPSERVXHN:5000
+crudini --set $CFILE keystone_authtoken auth_url http://$VIPSERVXHN:35357
+crudini --set $CFILE keystone_authtoken memcached_servers $CONTROLLER_IPS:11211,$SECONDARY_CNTL_IPS:11211,$TERTIARY_CNTRL_IPS:11211
+crudini --set $CFILE keystone_authtoken auth_type password
+crudini --set $CFILE keystone_authtoken project_domain_name default
+crudini --set $CFILE keystone_authtoken user_domain_name default
+crudini --set $CFILE keystone_authtoken project_name service
+crudini --set $CFILE keystone_authtoken username glance
+crudini --set $CFILE keystone_authtoken password $SERVICE_PASS
+
+# [paste deploy]
+crudini --set $CFILE paste_deploy flavor keystone
+
+# glance services
+su -s /bin/sh -c "glance-manage db_sync" glance
+
+for svc in api registry ; do
+   systemctl enable openstack-glance-$svc
+   systemctl restart openstack-glance-$svc
+done
+
+# +------------------------------------------+
+# | CEILOMETER                               |
+# +------------------------------------------+
+if [ x$CEILOMETER == xTrue ]; then
+
+   declare -a arr1=(`cat $installdir/profile | grep CONTROLLER | awk -F= '{print $2}'`)
+   rabbit_str=""
+   len=`echo ${#arr1[@]}`
+   if [ $len -lt 2 ]; then
+      rabbit_str=${arr1[0]}
+   else
+      for i in ${arr1[@]}; do
+          rabbit_str=$i:5672,$rabbit_str
+      done
+      rabbit_str=${rabbit_str::-1}
+   fi
+
+   # /etc/glance/glance-api.conf
+   CFILE=/etc/glance/glance-api.conf
+
+   # [DEFAULT]
+   crudini --set $CFILE DEFAULT notification_driver messagingv2
+   crudini --set $CFILE DEFAULT rpc_backend rabbit
+   crudini --set $CFILE DEFAULT rabbit_hosts $rabbit_str
+   crudini --set $CFILE DEFAULT rabbit_userid openstack
+   crudini --set $CFILE DEFAULT rabbit_password ${RABBIT_PASS}
+
+   # /etc/glance/glance-registry.conf
+   CFILE=/etc/glance/glance-registry.conf
+
+   # [DEFAULT]
+   crudini --set $CFILE DEFAULT notification_driver messagingv2
+   crudini --set $CFILE DEFAULT rpc_backend rabbit
+   crudini --set $CFILE DEFAULT rabbit_hosts $rabbit_str
+   crudini --set $CFILE DEFAULT rabbit_userid openstack
+   crudini --set $CFILE DEFAULT rabbit_password ${RABBIT_PASS}
+
+   # restart services
+   for svc in api registry ; do
+      systemctl restart openstack-glance-$svc
+   done
+   echo "Storage ceilometer configured"
+fi
+
+# +------------------------------------------+
+# | MONITORING                               |
+# +------------------------------------------+
+cd ${installdir}
+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   ./nagios-client
+fi
+
+# +------------------------------------------+
+# | DNS                                      |
+# +------------------------------------------+
+if [ x$ENABLE_DNS == xTrue ]; then
+   ./dns-client
+fi
+
+# +------------------------------------------+
+# | BACKUP                                   |
+# +------------------------------------------+
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   ./amanda-client
+fi
+
+# +------------------------------------------+
+# | LDAP                                     |
+# +------------------------------------------+
+if [ x$ENABLE_LDAP == xTrue ]; then
+   ./ldap-client
+fi
+
+# +------------------------------------------+
+# | ANTI-VIRUS                               |
+# +------------------------------------------+
+if [ x$ENABLE_CLAMAV == x"True" ]; then
+   ./clamav-server
+fi
+
+# +------------------------------------------+
+# | LOGSTASH                                 |
+# +------------------------------------------+
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   echo "logstash"
+   ./logstash-client
+fi
+
+echo "End swift"
+

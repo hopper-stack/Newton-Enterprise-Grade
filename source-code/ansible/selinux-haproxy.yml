@@ -1,0 +1,9 @@
+---
+- name: Switch off SELinux
+  hosts: haproxy
+  tasks:
+  - name: Turn off SELinux on HA Proxy Servers
+    selinux: state=disabled
+  - name: Turn off at Coammand Line
+    command: echo 0 > /sys/fs/selinux/enforce
+

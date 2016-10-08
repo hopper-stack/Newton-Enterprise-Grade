@@ -1,0 +1,77 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f nagios-log-manager-profile ]; then
+   echo
+   echo " +--------------------------------------------------------------+"
+   echo " |  No nagios-log-manager-profile file found in this directory  |"
+   echo " +--------------------------------------------------------------+"
+   echo
+   exit
+else
+   source nagios-log-manager-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# patch server
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# +------------------------------------------+
+# | INSTALL PACAKGES                         |
+# +------------------------------------------+
+wget http://$FILESERVER/$HTTPFILES/nagios/nagioslogserver-latest.tar.gz
+sleep 2
+
+tar xzf nagioslogserver*.tar.gz
+cd nagioslogserver
+./fullinstall
+

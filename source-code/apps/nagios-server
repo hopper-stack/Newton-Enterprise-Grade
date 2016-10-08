@@ -1,0 +1,324 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f nagios-server-profile ]; then
+   echo
+   echo " +---------------------------------------------------------+"
+   echo " |  No nagios-server-profile file found in this directory  |"
+   echo " +---------------------------------------------------------+"
+   echo
+   exit
+else
+   source nagios-server-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# patch server
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# +------------------------------------------+
+# | INSTALL PACAKGES                         |
+# +------------------------------------------+
+yum install -y httpd php
+yum install -y gcc glibc glibc-common make gd gd-devel net-snmp
+
+useradd nagios
+
+groupadd nagcmd
+usermod -G nagcmd nagios
+usermod -G nagcmd apache
+
+mkdir ~/nagios
+cd ~/nagios
+
+wget http://$FILESERVER/$HTTPFILES/nagios/nagios-4.0.8.tar.gz
+sleep 2
+wget http://$FILESERVER/$HTTPFILES/nagios/nagios-plugins-2.0.3.tar.gz
+sleep 2
+
+tar xzf nagios-4.0.8.tar.gz
+tar xzf nagios-plugins-2.0.3.tar.gz
+rm -rf nagios-4.0.8.tar.gz  nagios-plugins-2.0.3.tar.gz
+
+cd nagios-4.0.8/
+./configure --with-command-group=nagcmd
+make all
+make install
+make install-init
+make install-commandmode
+make install-config
+
+# email
+sed -i.bak "s/nagios@localhost/$EMAIL/g" /usr/local/nagios/etc/objects/contacts.cfg
+
+make install-webconf
+htpasswd -s -b -c /usr/local/nagios/etc/htpasswd.users nagiosadmin $NAGIOS_PASS
+
+systemctl enable httpd
+systemctl restart httpd
+
+cd ~/nagios
+cd nagios-plugins-2.0.3
+./configure --with-nagios-user=nagios --with-nagios-group=nagios
+make
+make install
+
+/usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+
+iptables -A INPUT -p tcp -m tcp --dport 5666 -j ACCEPT
+service iptables save
+firewall-cmd --permanent --zone=public --add-port=80/tcp
+firewall-cmd --permanent --zone=public --add-port=5666/tcp
+firewall-cmd --reload
+
+chkconfig --add nagios
+chkconfig --level 35 nagios on
+chkconfig --list nagios
+systemctl restart nagios.service
+
+echo " +----------------+"
+echo " |  Access point  |"
+echo " +----------------+"
+echo " http://$NAGIOSSERVER/nagios"
+
+# client monitoring
+sed -i.bak "s/^#cfg_dir=\/usr\/local\/nagios\/etc\/servers/cfg_dir=\/usr\/local\/nagios\/etc\/servers/g" /usr/local/nagios/etc/nagios.cfg
+
+mkdir /usr/local/nagios/etc/servers
+
+FILE=/usr/local/nagios/etc/objects/commands.cfg
+echo "" >> $FILE
+echo "define command{" >> $FILE
+echo "   command_name    mysql-status" >> $FILE
+echo "   command_line    /usr/lib64/nagios/plugins/check_nrpe -H \$HOSTADDRESS\$ -c mysql-status" >> $FILE
+echo "}" >> $FILE
+echo "" >> $FILE
+
+echo "define command{" >> $FILE
+echo "   command_name    check_nrpe" >> $FILE
+echo "   command_line    /usr/lib64/nagios/plugins/check_nrpe -H \$HOSTADDRESS\$ -c \$ARG1\$" >> $FILE
+echo "}" >> $FILE
+echo "" >> $FILE
+
+# nrpe services
+yum install -y nrpe
+yum install -y nagios-plugins-nrpe
+yum install -y nagios-plugins-all
+
+systemctl restart nagios.service
+systemctl restart nrpe.service
+
+# +------------------------------------------+
+# | SERVICES                                 |
+# +------------------------------------------+
+create-service(){
+   mkdir -p /usr/local/nagios/etc/objects/$host
+   echo "cfg_dir=/usr/local/nagios/etc/objects/$host" >> /usr/local/nagios/etc/nagios.cfg 
+
+   FILE=/usr/local/nagios/etc/objects/$host/$host.cfg
+   echo "define host{" >> $FILE
+   echo "   use                             linux-server" >> $FILE
+   echo "   host_name                       $host" >> $FILE
+   echo "   alias                           $host" >> $FILE
+   echo "   address                         $serverip" >> $FILE
+   echo "   max_check_attempts              5" >> $FILE
+   echo "   check_period                    24x7" >> $FILE
+   echo "   notification_interval           30" >> $FILE
+   echo "   notification_period             24x7" >> $FILE
+   echo "   }" >> $FILE
+   echo "" >> $FILE   
+
+   echo "define service{" >> $FILE
+   echo "   use                             generic-service" >> $FILE
+   echo "   host_name                       $host" >> $FILE
+   echo "   service_description             SSH" >> $FILE
+   echo "   check_command                   check_ssh" >> $FILE
+   echo "   notifications_enabled           $notify" >> $FILE
+   echo "}" >> $FILE
+   echo "" >> $FILE
+   
+   echo "define service{" >> $FILE
+   echo "   use                             local-service" >> $FILE
+   echo "   host_name                       $host" >> $FILE
+   echo "   service_description             check-load" >> $FILE
+   echo "   check_command                   check_nrpe!check_load" >> $FILE
+   echo "   notifications_enabled           $notify" >> $FILE
+   echo "   }" >> $FILE
+   echo "" >> $FILE 
+}
+
+update-service(){
+    FILE=/usr/local/nagios/etc/objects/$host/$host.cfg
+	echo "define service {" >> $FILE
+	echo "   use                             $useservice" >> $FILE
+	echo "   host_name                       $host" >> $FILE
+	echo "   service_description             $desc" >> $FILE
+	echo "   check_command                   $chkcommand" >> $FILE
+	echo "   notifications_enabled           $notify" >> $FILE
+	echo "}" >> $FILE
+    echo "" >> $FILE 
+}
+
+cd $installdir
+
+# +------------------------------------------+
+# | HAPROXY                                  |
+# +------------------------------------------+
+count=`cat nagios-server-profile | grep ^HASV[0-9] | wc -l`
+for i in $(seq 1 $count); do
+   host=`cat nagios-server-profile | grep ^HASV${i} \
+   | awk -F= '{print $2}'`
+   serverip=`cat nagios-server-profile | grep ^HAIP${i} \
+   | awk -F= '{print $2}'`
+   notify=1
+   create-service
+   useservice=generic-service
+   desc=haproxy
+   chkcommand="check_nrpe!check_haproxy"
+   update-service
+done
+
+# +------------------------------------------+
+# | CONTROLLER                               |
+# +------------------------------------------+
+count=`cat nagios-server-profile | grep ^CTLSV[0-9] | wc -l`
+for i in $(seq 1 $count); do
+   host=`cat nagios-server-profile | grep ^CTLSV${i} \
+   | awk -F= '{print $2}'`
+   serverip=`cat nagios-server-profile | grep ^CTLIP${i} \
+   | awk -F= '{print $2}'`
+   notify=1
+   create-service
+   useservice=generic-service
+   desc=mysql-status
+   chkcommand=mysql-status
+   update-service
+done
+
+# +------------------------------------------+
+# | SWIFT                                    |
+# +------------------------------------------+
+count=`cat nagios-server-profile | grep ^STSV[0-9] | wc -l`
+for i in $(seq 1 $count); do
+   host=`cat nagios-server-profile | grep ^STSV${i} \
+   | awk -F= '{print $2}'`
+   serverip=`cat nagios-server-profile | grep ^STIP${i} \
+   | awk -F= '{print $2}'`
+   notify=1
+   create-service
+   useservice=generic-service
+   desc=swift-account
+   chkcommand="check_nrpe!check_swift-account"
+   update-service
+   desc=swift-container
+   chkcommand="check_nrpe!check_swift-container"
+   update-service
+   desc=swift-object
+   chkcommand="check_nrpe!check_swift-object"
+   update-service
+   desc=glance-api
+   chkcommand="check_nrpe!check_glance-api"
+   update-service
+   desc=glance-registry
+   chkcommand="check_nrpe!check_glance-registry"
+   update-service
+done
+
+# +------------------------------------------+
+# | NOVA                                     |
+# +------------------------------------------+
+count=`cat nagios-server-profile | grep ^CMPSV[0-9] | wc -l`
+for i in $(seq 1 $count); do
+   host=`cat nagios-server-profile | grep ^CMPSV${i} \
+   | awk -F= '{print $2}'`
+   serverip=`cat nagios-server-profile | grep ^CMPIP${i} \
+   | awk -F= '{print $2}'`
+   notify=1
+   create-service
+   useservice=generic-service
+   desc=nova-compute
+   chkcommand="check_nrpe!check_nova-compute"
+   update-service
+done
+
+# +------------------------------------------+
+# | NEUTRON                                  |
+# +------------------------------------------+
+count=`cat nagios-server-profile | grep ^NETSV[0-9] | wc -l`
+for i in $(seq 1 $count); do
+   host=`cat nagios-server-profile | grep ^NETSV${i} \
+   | awk -F= '{print $2}'`
+   serverip=`cat nagios-server-profile | grep ^NETIP${i} \
+   | awk -F= '{print $2}'`
+   notify=1
+   create-service
+   useservice=generic-service
+   desc=neutron-ovs
+   chkcommand="check_nrpe!check_ovs"
+   update-service
+   desc=neutron-l3
+   chkcommand="check_nrpe!check_l3"
+   update-service
+   desc=neutron-dhcp
+   chkcommand="check_nrpe!check_dhcp"
+   update-service
+done
+
+systemctl restart nagios.service
+systemctl restart nrpe.service
+
+### HELP
+# /usr/local/nagios/etc/nagios.cfg
+# /usr/local/nagios/etc/objects/$host/$host.cfg
+# /usr/local/nagios/etc/objects/commands.cfg
+# /etc/nagios/nrpe.cfg
+

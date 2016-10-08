@@ -1,0 +1,56 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f keepass-server-profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source keepass-server-profile
+fi
+
+OSVER=centos
+
+rpm --import "http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF"
+yum-config-manager --add-repo http://download.mono-project.com/repo/$OSVER/
+yum install mono -y
+rm -rf /etc/yum.repos.d/download.mono-project.com_repo_${OSVER}_.repo
+
+mkdir /keepass
+cd /keepass
+wget http://$FILESERVER/$HTTPFILES/keepass/KeePass-2.28.zip
+sleep 5
+
+unzip KeePass-2.28.zip
+rm -f KeePass-2.28.zip
+
+# xming requirements
+yum install -y xorg-x11-xauth
+yum install -y xorg-x11-fonts-*
+yum install -y xorg-x11-utils
+
+mono KeePass.exe
+

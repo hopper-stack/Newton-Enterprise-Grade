@@ -1,0 +1,63 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f ldap-server-profile ]; then
+   echo
+   echo " +-------------------------------------------------------+"
+   echo " |  No ldap-server-profile file found in this directory  |"
+   echo " +-------------------------------------------------------+"
+   echo
+   exit
+else
+   source ldap-server-profile
+fi
+
+yum -y install openldap-clients nss-pam-ldapd
+
+# parameters
+echo $DNSDOMAIN
+BASEDN=""
+
+arr1=$(echo $DNSDOMAIN | tr "." "\n")
+for i in ${arr1[@]}; do
+   BASEDN="${BASEDN}dc=$i,"
+done
+BASEDN=`echo "${BASEDN%?}"`
+echo $BASEDN
+
+# update 
+echo "TLS_REQCERT allow" >> /etc/openldap/ldap.conf 
+echo "tls_reqcert allow" >> /etc/nslcd.conf 
+
+authconfig --enableldap \
+--enableldapauth \
+--ldapserver=$LDAPSERVER \
+--ldapbasedn=$BASEDN \
+--enablemkhomedir \
+--update
+
+systemctl restart nslcd 
+
+### test
+### ldapsearch -x -b $BASEDN -H ldap://$LDAPSERVER -D cn=Manager,$BASEDN  -W -v -ZZ
+

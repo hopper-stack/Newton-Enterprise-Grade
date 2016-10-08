@@ -1,0 +1,101 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+cd $installdir
+source admin-openrc.sh
+
+SUBNT=`cat profile | grep NETWORKEXTGW | awk -F= '{print $2}' \
+| rev | cut -d. -f2- | rev`
+STRT=`cat profile | grep NETWORKWEXTRNG | awk -F= '{print $2}' \
+| awk -F- '{print $1}' | sed -e 's/\s//g'`
+END=`cat profile | grep NETWORKWEXTRNG | awk -F= '{print $2}' \
+| awk -F- '{print $2}' | sed -e 's/\s//g'`
+GW=`cat profile | grep NETWORKEXTGW | awk -F= '{print $2}' \
+| sed -e 's/\s//g'`
+MASK=`cat profile | grep NETWORKWEXTMASK | awk -F= '{print $2}'`
+
+vvv=${MASK}
+www="${SUBNT}.${STRT}"
+xxx="${SUBNT}.${END}"
+yyy=${GW}
+zzz=${SUBNT}
+
+echo " +---------+"
+echo " | Details |"
+echo " +---------+"
+echo " Start:$www, End:$xxx"
+echo " Gateway:$yyy, Subnet:$zzz"
+echo " Netmask:$vvv"
+
+# ext-net
+neutron net-create ext-net --shared --router:external \
+--provider:physical_network external --provider:network_type flat
+sleep 1
+
+# ext-net subnet
+neutron subnet-create ext-net $zzz.0/$vvv --name ext-subnet \
+--allocation-pool start=$www,end=$xxx \
+--disable-dhcp --gateway $yyy
+
+# project-net 
+source $PROJECT-openrc.sh
+neutron net-create $PROJECT-net
+sleep 1
+
+# project-net subnet
+neutron subnet-create $PROJECT-net 20.10.10.0/24 \
+--name $PROJECT-subnet \
+--dns-nameserver 8.8.8.8 \
+--gateway 20.10.10.254 
+sleep 1
+
+# project-router
+neutron router-create $PROJECT-router
+sleep 1
+
+# map router interface to project-subnet
+neutron router-interface-add $PROJECT-router $PROJECT-subnet
+sleep 1
+
+# map project-router gateway to ext-net
+neutron router-gateway-set $PROJECT-router ext-net
+sleep 1
+echo
+
+echo " +----------------------+"
+echo " |  Available networks  |"
+echo " +----------------------+"
+nova network-list
+sleep 1
+

@@ -1,0 +1,7 @@
+---
+- name: Main Orchestrator
+  hosts: controller1
+  tasks:
+  - name: Install Hopper-Stack OpenStack
+    shell: cd /install_dir; ./install-hopper-stack >> /var/log/install-hopper-stack.log 2>&1
+

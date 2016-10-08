@@ -1,0 +1,96 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f patch-server-rhel-profile ]; then
+   echo
+   echo " +-------------------------------------------------------------+"
+   echo " |  No patch-server-rhel-profile file found in this directory  |"
+   echo " +-------------------------------------------------------------+"
+   echo
+   exit
+else
+   source patch-server-rhel-profile
+fi
+
+# firewall
+firewall-cmd --permanent --zone=public --add-service=http
+firewall-cmd --reload
+
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# mount iso
+echo " Mounting ISO from /dev/sr0"
+ISO=`lsblk | grep sr[0-9] | grep rom | awk '{print $1}'`
+mount -o ro /dev/$ISO /mnt
+
+# create repository
+echo " Copying repository"
+mkdir -p /repos/$OSFLAVOR/7/0
+cd /mnt/$OSFLAVOR/7/0/ 
+find . -print | cpio -pdmu /repos/$OSFLAVOR/7/0/
+
+# install packages needed to create a repository
+cp /mnt/RedHat/7/0/rhel-7-server-rpms/Packages/createrepo-*.el7.noarch.rpm .
+cp /mnt/RedHat/7/0/rhel-7-server-rpms/Packages/deltarpm-*.x86_64.rpm .
+cp /mnt/RedHat/7/0/rhel-7-server-rpms/Packages/python-deltarpm*.rpm .
+rpm -ivh deltarpm-*.x86_64.rpm
+rpm -ivh python-deltarpm*.rpm
+rpm -ivh createrepo-*.el7.noarch.rpm
+
+#yum install -y createrepo
+rm -rf createrepo-*.el7.noarch.rpm deltarpm-*.x86_64.rpm python-deltarpm*.rpm
+
+createrepo /repos/$OSFLAVOR/7/0
+createrepo --update /repos/$OSFLAVOR/7/0
+
+# +------------------------------------------+
+# | OS REPOSITORY                            |
+# +------------------------------------------+
+FILE=/etc/yum.repos.d/hopper-repo.repo
+if [ ! -f $FILE ]; then
+   mkdir /etc/yum.repos.d/orig
+   mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/orig
+   
+   echo "[hopper-repo]" > $FILE
+   echo "name=Hopper-Stack $VERSION" >> $FILE
+   echo "baseurl=file:///repos/$OSFLAVOR/7/0" >> $FILE
+   echo "gpgcheck=0" >> $FILE
+   echo "enabled=1" >> $FILE
+   yum --enablerepo=hopper-repo clean metadata > /dev/null 2>&1
+   yum update -y
+fi
+
+yum install -y httpd
+
+ln -s /repos/$OSFLAVOR /var/www/html/$OSFLAVOR
+systemctl enable httpd
+systemctl restart httpd
+
+# HTTP files
+PROXYDIR=/var/www/html/$HTTPFILES
+mkdir $PROXYDIR
+cd /mnt/$HTTPFILES
+cd $HTTPFILES
+cp -r * $PROXYDIR
+

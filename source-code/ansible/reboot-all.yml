@@ -1,0 +1,15 @@
+---
+- name: Reboot All Servers
+  hosts: all-hosts
+  tasks:
+
+  - name: Reboot Host 
+    raw: /sbin/shutdown -r 1
+    changed_when: True
+    ignore_errors: true
+
+  - name: Wait for System Reboot
+    wait_for: host={{ ansible_default_ipv4.address }}
+              port=22 timeout=1200 delay=90 state=started
+    delegate_to: 127.0.0.1
+

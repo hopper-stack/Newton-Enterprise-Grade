@@ -1,0 +1,133 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f add-gluster-profile ]; then
+   echo
+   echo " +-------------------------------------------------------+"
+   echo " |  No add-gluster-profile file found in this directory  |"
+   echo " +-------------------------------------------------------+"
+   echo
+   exit
+else
+   source add-gluster-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+cd $installdir
+
+# formatting
+clear
+ckdisk=`cat $installdir/add-gluster-profile | grep CINDER_DISK | awk -F= '{print $2}'`
+echo "+------------------------------------------+"
+echo "| NOTICE                                   |"
+echo "+------------------------------------------+"
+echo "|  The following disks will  be formatted  |"
+echo "+------------------------------------------+"
+echo "$ckdisk"
+
+# patchsystem
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum -y install iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# +------------------------------------------+
+# | INSTALL PACAKGES                         |
+# +------------------------------------------+
+yum install -y crudini
+yum install -y glusterfs-server
+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   yum install -y percona-nagios-plugins
+   yum install -y nrpe
+   yum install -y nagios-plugins-all
+   yum install -y openssl
+fi
+
+if [[ x$ENABLE_AMANDA == xTrue && ! -f /var/lib/amanda/.amandahosts ]]; then
+   yum install -y amanda amanda-client
+fi
+
+systemctl restart glusterd
+
+# +------------------------------------------+
+# | CINDER                                   |
+# +------------------------------------------+
+declare -a arr1=(`cat $installdir/add-gluster-profile | grep CINDER_DISK | awk -F= '{print $2}'`)
+for i in ${arr1[@]}; do
+   mkfs.xfs -f /dev/${i}
+   mkdir -p /data/cinder${i}1
+   echo "/dev/${i} /data/cinder${i}1 xfs noatime,nodiratime,nobarrier,logbufs=8 0 2" >> /tmp/fstab
+   echo "/dev/${i} /data/cinder${i}1 xfs noatime,nodiratime,nobarrier,logbufs=8 0 2" >> /etc/fstab
+   mount /data/cinder${i}1
+   mkdir -p /data/cinder${i}1/brick
+done
+df -h
+
+# +------------------------------------------+
+# | MONITORING                               |
+# +------------------------------------------+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   # [global]
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   declare -a arr1=(`cat $installdir/add-gluster-profile | grep CINDER_DISK | awk -F= '{print $2}'`)
+   for i in ${arr1[@]}; do
+      crudini --set $CFILE "" command[check_${i}] \
+      "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/${i}"
+   done
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+echo "End add-gluster"
+

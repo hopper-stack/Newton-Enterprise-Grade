@@ -1,0 +1,97 @@
+~ What is Hopper~Stack ~
+
+The Hopper~Stack provides an automated installation of the core OpenStack components together with optionally selected support services. 
+
+Support Service included are as follows
+
+	Amanda Backup - Backup the entire OpenStack infrastructure servers
+	OpenLDAP      - Directory services for infrastructure servers
+	DNS           - Domain Name Services for infrastructure servers
+	Nagios        - Monitoring using Nagios s/w
+	Squid Proxy   - For downloading anti-virus signatures without connecting servers to the internet
+	Logstash      - Centralised log management (Includes, Kibana, Logstash, Elasticsearch and Nginx)
+	ClamAV        - Anti-Virus scanner for infrastructure servers
+	S3Backup      - Backup the SQL database to S3
+
+We do not provide any licenses for software that requires licensing - we only provide simple installation scripts.
+	
+We designed Hopper~Stack to keep up-to-date with the fast paced releases of OpenStack, giving engineers a method of understanding and implementing their own OpenStack environments.
+
+With an aggressive OpenStack release period of 6 months, Hopper~Stack provides BOTH a minimal and advanced installation via standard BASH-Shell scripts to help engineers understand how to build simple or complex environments. 
+
+Using Hopper~Stack, Stackers will be able to learn and develop their own skills and roll out their own versions of OpenStack.
+
+Essentially Hopper~Stack tries to tutor engineers in creating their own cloud offerings using OpenStack.
+
+With shell scripts, many Linux engineers will understand the code easily ~ for others, simply running the scripts and following the guides will still allow them to build environments and gain various OpenStack skills over a period of time. 
+
+Additional Opensource software can also be configured using Hopper~Stack and helps the reader to build an environment as an offering using what we consider some of the best Opensource software available.
+
+Hopper-Stack is designed around CentOS but also installs readily on the popularly used RedHat.
+
+We intend releasing the simplified installation which is based purely on the installation guide, within 2 weeks of the official OpenStack release. However, for the more complex build which also delivers a support service around OpenStack, we will attempt to deliver within 4 weeks. 
+
+		See http://www.hopper-stack.co.uk
+
+  +--------------------------------------------------------------------------+
+
+     Copyright 2016 Hopper-Stack
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+
+  +--------------------------------------------------------------------------+
+
+  Although Hopper~Stack is essentially a bunch of BASH-Shell scripts, we have
+  added the ability to use other software freely available in the Opensource
+  community so we'd like to take opportunity to thank those developers,
+  companies and individuals who produce such great software and ccde.
+
+           CentOS
+           https://www.centos.org
+
+           RedHat
+           https://www.redhat.com
+
+           OpenStack
+           https://www.openstack.org
+
+           Nagios monitoring
+           https://www.nagios.org
+
+           Amanda backup
+           http://www.amanda.org
+
+           OpenLDAP
+           http://www.openldap.org
+
+           Keepass
+           http://keepass.info
+
+           DNS
+           http://www.bind9.net
+
+           SQUID
+           http://www.squid-cache.org
+
+           CLAMAV
+           http://www.clamav.net
+
+           Amazon S3 Tools
+           http://s3tools.org/s3cmd
+
+           Elastic log monitoring
+           https://www.elastic.co
+
+                                          Copyright (c) 2016 Hopper~Stack
+
+

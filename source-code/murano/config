@@ -1,0 +1,27 @@
+# --------------------------------
+#       Sat 03 Mar 2016 GMT
+# --------------------------------
+installdir=/install_dir
+
+DBPASS="dbpass"
+SERVICE_PWD=Serv1cePwd
+
+ENABLE_ETCHOSTS=True
+ENABLE_LOGSTASH=True
+KBPASS=kbpassw0rd
+KBUSER=kibanaadmin
+LOGSTASHIP=192.168.1.197
+LOGSTASHHN=logstash
+KEEPELKLOGS=31
+REPORTSYSLOG=False
+REPORTVALUES=CRITICAL:TRACE:WARNING:ERROR
+REPORTHTTP200=False
+REPORTALLSWIFT=False
+
+FILESERVERHN=yumrepo
+FILESERVER=192.168.122.31
+HTTPFILES=hopper-stack-downloads
+
+NTPCONFIG=192.168.1.250
+NTPCONFIGHN=ntpserver
+

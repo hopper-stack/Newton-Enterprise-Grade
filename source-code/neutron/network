@@ -1,0 +1,456 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# credential
+unset OS_TOKEN
+unset OS_URL
+unset OS_IDENTITY_API_VERSION
+
+echo "export OS_PROJECT_DOMAIN_NAME=default" > admin-openrc.sh
+echo "export OS_USER_DOMAIN_NAME=default" >> admin-openrc.sh
+echo "export OS_PROJECT_NAME=admin" >> admin-openrc.sh
+echo "export OS_USERNAME=admin" >> admin-openrc.sh
+echo "export OS_PASSWORD=$ADMIN_PASS" >> admin-openrc.sh
+echo "export OS_AUTH_URL=http://$VIPSERVXHN:35357/v3" >> admin-openrc.sh
+echo "export OS_IDENTITY_API_VERSION=3" >> admin-openrc.sh
+
+echo "export OS_PROJECT_DOMAIN_NAME=default" > $PROJECT-openrc.sh
+echo "export OS_USER_DOMAIN_NAME=default" >> $PROJECT-openrc.sh
+echo "export OS_PROJECT_NAME=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_USERNAME=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_PASSWORD=$PROJECT" >> $PROJECT-openrc.sh
+echo "export OS_AUTH_URL=http://$VIPSERVXHN:5000/v3" >> $PROJECT-openrc.sh
+echo "export OS_IDENTITY_API_VERSION=3" >> $PROJECT-openrc.sh
+
+echo "export OS_IMAGE_API_VERSION=2" >> admin-openrc.sh
+echo "export OS_IMAGE_API_VERSION=2" >> $PROJECT-openrc.sh
+
+# patch system
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum install -y iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+source admin-openrc.sh
+
+# IP forwarding
+echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+echo 'net.ipv4.conf.all.rp_filter=0' >> /etc/sysctl.conf
+echo 'net.ipv4.conf.default.rp_filter=0' >> /etc/sysctl.conf
+sysctl -p
+
+# +------------------------------------------+
+# | INSTALL PACKAGES                         |
+# +------------------------------------------+
+yum install -y yum-plugin-priorities
+yum install -y python-openstackclient
+yum install -y crudini
+
+yum install -y openstack-neutron
+yum install -y openstack-neutron-ml2
+yum install -y openstack-neutron-openvswitch
+
+yum install -y openstack-neutron-fwaas
+yum install -y openstack-neutron-lbaas.noarch
+yum install -y haproxy
+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   yum install -y nrpe
+   yum install -y nagios-plugins-all
+   yum install -y openssl
+fi
+
+if [[ x$ENABLE_AMANDA == xTrue && ! -f /var/lib/amanda/.amandahosts ]]; then
+   yum install -y amanda amanda-client
+fi
+
+# +------------------------------------------+
+# | NEUTRON                                  |
+# +------------------------------------------+
+CFILE=/etc/neutron/neutron.conf
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT rpc_backend rabbit
+
+crudini --set $CFILE DEFAULT memcached_servers $CONTROLLER_IP:11211,$SECONDARY_CNTL_IP:11211,$TERTIARY_CNTRL_IP:11211
+
+# [oslo_messaging_rabbit]
+crudini --set $CFILE oslo_messaging_rabbit rabbit_hosts $CONTROLLER_IP:5672,$SECONDARY_CNTL_IP:5672,$TERTIARY_CNTRL_IP:5672
+crudini --set $CFILE oslo_messaging_rabbit rabbit_userid openstack
+crudini --set $CFILE oslo_messaging_rabbit rabbit_password ${RABBIT_PASS}
+
+crudini --set $CFILE DEFAULT auth_strategy keystone
+
+# [keystone_authtoken]
+crudini --del $CFILE keystone_authtoken
+crudini --set $CFILE keystone_authtoken auth_uri http://$VIPSERVXHN:5000
+crudini --set $CFILE keystone_authtoken auth_url http://$VIPSERVXHN:35357
+crudini --set $CFILE keystone_authtoken memcached_servers $CONTROLLER_IP:11211,$SECONDARY_CNTL_IP:11211,$TERTIARY_CNTRL_IP:11211
+crudini --set $CFILE keystone_authtoken auth_type password
+crudini --set $CFILE keystone_authtoken project_domain_name default
+crudini --set $CFILE keystone_authtoken user_domain_name default
+crudini --set $CFILE keystone_authtoken project_name service
+crudini --set $CFILE keystone_authtoken username neutron
+crudini --set $CFILE keystone_authtoken password $SERVICE_PASS
+
+crudini --set $CFILE DEFAULT core_plugin ml2
+crudini --set $CFILE DEFAULT service_plugins router
+crudini --set $CFILE DEFAULT allow_overlapping_ips True
+
+crudini --set $CFILE oslo_concurrency lock_path /var/lib/neutron/tmp
+crudini --set $CFILE DEFAULT verbose True
+
+# FWAAS
+if [ x$FWAAS == xTrue ]; then
+
+   # [DEFAULT]
+   SP=`crudini --get $CFILE DEFAULT service_plugins`
+   crudini --set $CFILE DEFAULT service_plugins $SP,firewall
+
+   CFILE=/etc/neutron/fwaas_driver.ini
+
+   # [fwaas]
+   crudini --set $CFILE fwaas driver neutron_fwaas.services.firewall.drivers.linux.iptables_fwaas.IptablesFwaasDriver
+   crudini --set $CFILE fwaas enabled True
+fi
+
+# LBAAS
+if [ x$LBAAS == xTrue ]; then
+
+   # /etc/neutron/neutron.conf
+   CFILE=/etc/neutron/neutron.conf
+
+   # [DEFAULT]
+   SP=`crudini --get $CFILE DEFAULT service_plugins`
+   crudini --set $CFILE DEFAULT service_plugins $SP,lbaas
+
+   # /etc/neutron/lbaas_agent.ini
+   CFILE=/etc/neutron/lbaas_agent.ini
+
+   # [DEFAULT]
+   crudini --set $CFILE DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+   crudini --set $CFILE DEFAULT device_driver neutron.services.loadbalancer.drivers.haproxy.namespace_driver.HaproxyNSDriver
+
+   # [haproxy]
+   crudini --set $CFILE haproxy user_group haproxy
+
+   # /etc/neutron/neutron_lbaas.conf
+   CFILE=/etc/neutron/neutron_lbaas.conf
+
+   # [service_providers]
+   crudini --set $CFILE service_providers service_provider LOADBALANCER:Haproxy:neutron_lbaas.services.loadbalancer.drivers.haproxy.plugin_driver.HaproxyOnHostPluginDriver:default
+
+   systemctl enable neutron-lbaas-agent
+   systemctl restart neutron-lbaas-agent
+   systemctl enable haproxy
+   systemctl restart haproxy
+fi
+
+# /etc/neutron/plugins/ml2/ml2_conf.ini
+CFILE=/etc/neutron/plugins/ml2/ml2_conf.ini
+
+if [ x$TUNNELTYPE == x1 ]; then
+   # [ml2]
+   crudini --set $CFILE ml2 type_drivers flat,gre
+   crudini --set $CFILE ml2 tenant_network_types gre
+   crudini --set $CFILE ml2 mechanism_drivers openvswitch
+
+   # [ml2_type_flat]
+   crudini --set $CFILE ml2_type_flat flat_networks external
+
+   # [ml2_type_gre]
+   crudini --set $CFILE ml2_type_gre tunnel_id_ranges 1:1000
+else
+   # [ml2]
+   crudini --set $CFILE ml2 type_drivers flat,vxlan
+   crudini --set $CFILE ml2 tenant_network_types vxlan
+   crudini --set $CFILE ml2 mechanism_drivers openvswitch
+
+   # [ml2_type_flat]
+   crudini --set $CFILE ml2_type_flat flat_networks external
+
+   # [ml2_type_vxlan]
+   crudini --set $CFILE ml2_type_vxlan vni_ranges 1:1000
+fi
+
+# [securitygroup]
+crudini --set $CFILE securitygroup enable_security_group True
+crudini --set $CFILE securitygroup enable_ipset True
+crudini --set $CFILE securitygroup firewall_driver neutron.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver
+
+# [ovs]
+crudini --set $CFILE ovs local_ip $THISHOST_TUNNEL_IP
+crudini --set $CFILE ovs bridge_mappings external:br-ex
+
+if [ x$TUNNELTYPE == x1 ]; then
+   # [agent]
+   crudini --set $CFILE agent tunnel_types gre
+else
+   crudini --set $CFILE agent tunnel_types vxlan
+fi
+
+# VLAN network
+CFILE=/etc/neutron/plugins/ml2/ml2_conf.ini
+if [ x$MGTVLAN == xTrue ]; then
+   # [ml2]
+   SP=`crudini --get $CFILE ml2 type_drivers`
+   crudini --set $CFILE ml2 type_drivers $SP,vlan
+
+   SP=`crudini --get $CFILE ml2 tenant_network_types`
+   crudini --set $CFILE ml2 tenant_network_types $SP,vlan
+   crudini --set $CFILE ml2 mechanism_drivers openvswitch
+
+   # [ml2_type_vlan]
+   RNG=`echo $MGTRANGE | sed s/-/:/`
+   crudini --set $CFILE ml2_type_vlan network_vlan_ranges physnet2:$RNG
+
+   # [ovs]
+   SP=`crudini --get $CFILE ovs bridge_mappings`
+   crudini --set $CFILE ovs bridge_mappings $SP,physnet2:br-vlan
+   crudini --set $CFILE ovs network_vlan_ranges physnet2:$RNG
+fi
+
+# /etc/neutron/l3_agent.ini
+CFILE=/etc/neutron/l3_agent.ini
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+crudini --set $CFILE DEFAULT external_network_bridge ""
+crudini --set $CFILE DEFAULT router_delete_namespaces True
+crudini --set $CFILE DEFAULT verbose True
+
+# /etc/neutron/dhcp_agent.ini
+CFILE=/etc/neutron/dhcp_agent.ini
+
+# [DEFAULT]
+crudini --set $CFILE DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+crudini --set $CFILE DEFAULT dhcp_driver neutron.agent.linux.dhcp.Dnsmasq
+crudini --set $CFILE DEFAULT verbose True
+crudini --set $CFILE DEFAULT enable_isolated_metadata True
+crudini --set $CFILE DEFAULT enable_metadata_network True
+
+# set MTU value to 1454
+CFILE=/etc/neutron/dhcp_agent.ini
+crudini --set $CFILE DEFAULT dnsmasq_config_file /etc/neutron/dnsmasq-neutron.conf
+echo "dhcp-option-force=26,1454" >> /etc/neutron/dnsmasq-neutron.conf
+pkill dnsmasq
+
+# /etc/neutron/metadata_agent.ini
+CFILE=/etc/neutron/metadata_agent.ini
+
+crudini --set $CFILE DEFAULT auth_uri http://$VIPSERVXHN:5000
+crudini --set $CFILE DEFAULT auth_url http://$VIPSERVXHN:35357
+crudini --set $CFILE DEFAULT auth_region RegionOne
+crudini --set $CFILE DEFAULT auth_type password
+crudini --set $CFILE DEFAULT project_domain_name default
+crudini --set $CFILE DEFAULT user_domain_name default
+crudini --set $CFILE DEFAULT project_name service
+crudini --set $CFILE DEFAULT username neutron
+crudini --set $CFILE DEFAULT password $SERVICE_PASS
+
+crudini --set $CFILE DEFAULT nova_metadata_ip $VIP_ADDRESS
+crudini --set $CFILE DEFAULT metadata_proxy_shared_secret $META_PASS
+crudini --set $CFILE DEFAULT verbose True
+
+# /etc/neutron/plugins/ml2/openvswitch_agent.ini
+CFILE=/etc/neutron/plugins/ml2/openvswitch_agent.ini
+crudini --set $CFILE ovs integration_bridge br-int
+crudini --set $CFILE ovs tunnel_bridge br-tun
+crudini --set $CFILE ovs local_ip $THISHOST_TUNNEL_IP
+crudini --set $CFILE ovs enable_tunneling True
+crudini --set $CFILE ovs int_peer_patch_port patch-tun
+crudini --set $CFILE ovs tun_peer_patch_port patch-int
+crudini --set $CFILE ovs bridge_mappings external:br-ex
+
+if [ x$MGTVLAN == xTrue ]; then
+   SP=`crudini --get $CFILE ovs bridge_mappings`
+   crudini --set $CFILE ovs bridge_mappings $SP,physnet2:br-vlan
+fi
+
+crudini --set $CFILE securitygroup firewall_driver neutron.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver
+crudini --set $CFILE securitygroup enable_security_group True
+crudini --set $CFILE securitygroup enable_ipset True
+
+if [ x$TUNNELTYPE == x1 ]; then
+   # [agent]
+   crudini --set $CFILE agent tunnel_types gre
+else
+   crudini --set $CFILE agent tunnel_types vxlan
+fi
+
+# distributed virtual routing
+if [ x$DVR == xTrue ]; then 
+   CFILE=/etc/neutron/plugins/ml2/ml2_conf.ini
+   crudini --set $CFILE agent l2_population True
+   crudini --set $CFILE agent enable_distributed_routing True
+   crudini --set $CFILE agent arp_responder True
+
+   CFILE=/etc/neutron/l3_agent.ini
+   crudini --set $CFILE DEFAULT use_namespaces True
+   crudini --set $CFILE DEFAULT agent_mode dvr_snat
+
+   CFILE=/etc/neutron/dhcp_agent.ini
+   crudini --set $CFILE DEFAULT use_namespaces True
+
+   CFILE=/etc/neutron/plugins/ml2/openvswitch_agent.ini
+   crudini --set $CFILE securitygroup firewall_driver iptables_hybrid
+
+   systemctl enable neutron-dhcp-agent.service neutron-l3-agent.service neutron-metadata-agent.service neutron-openvswitch-agent.service openvswitch.service
+   systemctl restart neutron-dhcp-agent.service neutron-l3-agent.service neutron-metadata-agent.service neutron-openvswitch-agent.service openvswitch.service
+
+fi
+
+# enable services
+systemctl enable openvswitch.service
+systemctl start openvswitch.service
+
+ovs-vsctl add-br br-ex
+ovs-vsctl add-port br-ex $EXTNET
+ethtool -K $EXTNET gro off
+
+if [ x$MGTVLAN == xTrue ]; then
+   ovs-vsctl add-br br-vlan
+   ovs-vsctl add-port br-vlan $NETWIROJNIC
+fi
+
+# start services
+ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+for svc in openvswitch-agent l3-agent dhcp-agent metadata-agent ; do
+   systemctl enable neutron-$svc
+   systemctl restart neutron-$svc
+done
+
+systemctl enable neutron-ovs-cleanup.service
+
+# security group
+source $PROJECT-openrc.sh
+TESTGRP=`neutron security-group-list | grep hopper-stack-defaults | awk '{print $4}'`
+if [ x$TESTGRP == x ];then
+   echo
+   echo "Creating Hopper-Stack default security group"
+   neutron security-group-create hopper-stack-defaults \
+   --description "Hopper-Stack default security group" 
+
+   # allow incoming HTTP
+   neutron security-group-rule-create --direction ingress --protocol tcp \
+   --port_range_min 80 --port_range_max 80 hopper-stack-defaults
+
+   # allow incoming HTTPS
+   neutron security-group-rule-create --direction ingress --protocol tcp \
+   --port_range_min 443 --port_range_max 443 hopper-stack-defaults
+
+   # allow incoming SSH
+   neutron security-group-rule-create --direction ingress --protocol tcp \
+   --port_range_min 22 --port_range_max 22 hopper-stack-defaults
+
+   # allow incoming RDP
+   neutron security-group-rule-create --direction ingress --protocol tcp \
+   --port_range_min 3389 --port_range_max 3389 hopper-stack-defaults
+fi
+
+# +------------------------------------------+
+# | MONITORING                               |
+# +------------------------------------------+
+cd ${installdir}
+
+if [ x${ENABLE_NAGIOS} == xTrue ]; then
+   ./nagios-client
+fi
+
+# +------------------------------------------+
+# | DNS                                      |
+# +------------------------------------------+
+if [ x$ENABLE_DNS == xTrue ]; then
+   ./dns-client
+fi
+
+# +------------------------------------------+
+# | BACKUP                                   |
+# +------------------------------------------+
+if [ x$ENABLE_AMANDA == xTrue ]; then
+   ./amanda-client
+fi
+
+# +------------------------------------------+
+# | LDAP                                     |
+# +------------------------------------------+
+if [ x$ENABLE_LDAP == xTrue ]; then
+   ./ldap-client
+fi
+
+# +------------------------------------------+
+# | ANTI-VIRUS                               |
+# +------------------------------------------+
+if [ x$ENABLE_CLAMAV == x"True" ]; then
+   ./clamav-server
+fi
+
+# +------------------------------------------+
+# | LOGSTASH                                 |
+# +------------------------------------------+
+if [ x$ENABLE_LOGSTASH == xTrue ]; then
+   echo "logstash"
+   ./logstash-client
+fi
+
+echo "End neutron"

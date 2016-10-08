@@ -1,0 +1,381 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f logstash-server-profile ]; then
+   echo
+   echo "No logstash-server-profile file found in current directory"
+   echo
+   exit
+else
+   source logstash-server-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+# patch system
+if [ ! -f /etc/yum.repos.d/hopper-repo.repo ]; then
+   ./patch-client
+fi
+
+# NTP
+yum install -y chrony
+yum install -y crudini
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+# firewall
+systemctl mask firewalld
+systemctl stop firewalld
+yum install -y iptables-services
+systemctl stop  iptables
+systemctl disable iptables
+sed -i 's/enforcing/disabled/g' /etc/selinux/config
+echo 0 > /sys/fs/selinux/enforce
+
+# +------------------------------------------+
+# | ELASTICSEARCH                            |
+# +------------------------------------------+
+wget http://$FILESERVER/$HTTPFILES/logstash/jdk-8u65-linux-x64.rpm
+yum localinstall -y jdk-8u65-linux-x64.rpm
+rm -rf jdk-8u65-linux-x64.rpm
+
+wget http://$FILESERVER/$HTTPFILES/logstash/elasticsearch-2.1.0.rpm
+yum localinstall -y elasticsearch-2.1.0.rpm
+rm -rf elasticsearch-2.1.0.rpm
+
+# network.host
+sed -i.bak "/# network.host:/a \
+network.host: localhost\n\
+path.data: /opt/elasticsearch/data\n\
+path.logs: /opt/elasticsearch/logs\n\
+path.home: /opt/elasticsearch" \
+/etc/elasticsearch/elasticsearch.yml
+
+mkdir /opt/elasticsearch/
+chown elasticsearch:elasticsearch /opt/elasticsearch
+
+systemctl enable elasticsearch
+systemctl start elasticsearch
+
+# clean up
+CFILE=/opt/elasticsearch/cleanup.sh
+echo "#!/bin/bash" > $CFILE
+echo "deleteindices=\`date +%Y.%m.%d -d '$KEEPELKLOGS days ago'\`" >> $CFILE
+echo "curl -s -XDELETE  http://127.0.0.1:9200/logstash-\${deleteindices}" >> $CFILE
+chmod 700 /opt/elasticsearch/cleanup.sh
+echo "15 03 * * * /opt/elasticsearch/cleanup.sh > /opt/elasticsearch/logs/cronlog 2>&1" >> /var/spool/cron/root
+
+# +------------------------------------------+
+# | KIBANA                                   |
+# +------------------------------------------+
+groupadd -g 1005 kibana
+useradd -u 1005 -g 1005 kibana
+
+wget http://$FILESERVER//$HTTPFILES/logstash/kibana-4.3.1-linux-x64.tar.gz
+tar xf kibana-*.tar.gz
+rm -f kibana-*.tar.gz
+
+# server.host
+sed -i.bak "/# server.host:/a \
+server.host: \"localhost\"" \
+kibana-4.3.1-linux-x64/config/kibana.yml
+
+mkdir -p /opt/kibana
+cp -R kibana-4*/* /opt/kibana/
+chown -R kibana: /opt/kibana
+rm -rf kibana-4*
+
+cd /etc/init.d && curl -o kibana http://$FILESERVER/$HTTPFILES/logstash/kibana-init
+cd /etc/default && curl -o kibana  http://$FILESERVER/$HTTPFILES/logstash/kibana-default
+chmod 755 /etc/init.d/kibana
+
+service kibana start
+chkconfig kibana on
+
+# +------------------------------------------+
+# | NGINX                                    |
+# +------------------------------------------+
+yum install -y nginx
+yum install -y httpd-tools
+
+htpasswd -dbc /etc/nginx/htpasswd.users $KBUSER $KBPASS
+sed -i -e '/server {/,+19d' /etc/nginx/nginx.conf
+
+HN=`hostname`
+IP=`cat /etc/hosts | grep $HN | awk '{print $1}'`
+
+echo "server {" > /etc/nginx/conf.d/kibana.conf
+echo "    listen 80;" >> /etc/nginx/conf.d/kibana.conf
+echo "" >> /etc/nginx/conf.d/kibana.conf
+echo "    server_name $HN;" >> /etc/nginx/conf.d/kibana.conf
+echo "" >> /etc/nginx/conf.d/kibana.conf
+echo "    auth_basic \"Restricted Access\";" >> /etc/nginx/conf.d/kibana.conf
+echo "    auth_basic_user_file /etc/nginx/htpasswd.users;" >> /etc/nginx/conf.d/kibana.conf
+echo "" >> /etc/nginx/conf.d/kibana.conf
+echo "    location / {" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_pass http://localhost:5601;" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_http_version 1.1;" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_set_header Upgrade \$http_upgrade;" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_set_header Connection 'upgrade';" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_set_header Host \$host;" >> /etc/nginx/conf.d/kibana.conf
+echo "        proxy_cache_bypass \$http_upgrade;        " >> /etc/nginx/conf.d/kibana.conf
+echo "    }" >> /etc/nginx/conf.d/kibana.conf
+echo "}" >> /etc/nginx/conf.d/kibana.conf
+
+systemctl start nginx
+systemctl enable nginx
+
+# +------------------------------------------+
+# | LOGSTASH                                 |
+# +------------------------------------------+
+cd $installdir
+wget http://$FILESERVER//$HTTPFILES/logstash/logstash-2.1.1-1.noarch.rpm
+yum localinstall -y logstash-2.1.1-1.noarch.rpm
+
+CFILE=/etc/pki/tls/openssl.cnf
+
+sed -i.bak "/^\[ v3_ca \]/a \
+subjectAltName = IP: $IP" \
+$CFILE
+
+cd /etc/pki/tls
+openssl req -config /etc/pki/tls/openssl.cnf -x509 -days 3650 -batch -nodes -newkey rsa:2048 -keyout private/logstash-forwarder.key -out certs/logstash-forwarder.crt
+
+# +------------------------------------------+
+# | INPUT                                    |
+# +------------------------------------------+
+LNUM=10
+LTYPE=input
+CFILE=/etc/logstash/conf.d/$LNUM-$LTYPE
+echo "input {" > $CFILE
+echo "  lumberjack {" >> $CFILE
+echo "    port => 5043" >> $CFILE
+echo "    type => \"logs\"" >> $CFILE
+echo "    ssl_certificate => \"/etc/pki/tls/certs/logstash-forwarder.crt\"" >> $CFILE
+echo "    ssl_key => \"/etc/pki/tls/private/logstash-forwarder.key\"" >> $CFILE
+echo "  }" >> $CFILE
+echo "}" >> $CFILE
+
+# +------------------------------------------+
+# | OUTPUT                                   |
+# +------------------------------------------+
+LNUM=20
+LTYPE=output
+CFILE=/etc/logstash/conf.d/$LNUM-$LTYPE
+echo "output {" > $CFILE
+echo "  elasticsearch { hosts => [\"localhost:9200\"] }" >> $CFILE
+echo "  stdout { codec => rubydebug }" >> $CFILE
+echo "}" >> $CFILE
+
+# +------------------------------------------+
+# | NEUTRON FILTER                           |
+# +------------------------------------------+
+LNUM=30
+LTYPE=filter
+CFILE=/etc/logstash/conf.d/$LNUM-$LTYPE
+echo "filter {" > $CFILE
+echo "  # Report on OpenStack logs" >> $CFILE
+echo "  if \"oslofmt\" in [tags] {" >> $CFILE
+echo "    multiline {" >> $CFILE
+echo "      negate => true" >> $CFILE
+echo "      pattern => \"^%{TIMESTAMP_ISO8601} \"" >> $CFILE
+echo "      what => \"previous\"" >> $CFILE
+echo "    }" >> $CFILE
+echo "" >> $CFILE
+
+echo "    multiline {" >> $CFILE
+echo "      negate => false" >> $CFILE
+echo "      pattern => \"^%{TIMESTAMP_ISO8601}%{SPACE}%{NUMBER}?%{SPACE}?TRACE\"" >> $CFILE
+echo "      what => \"previous\"" >> $CFILE
+echo "    }" >> $CFILE
+echo "" >> $CFILE
+
+echo "    grok {" >> $CFILE
+echo "      match => { \"message\" => \"(?m)^%{TIMESTAMP_ISO8601:logdate}%{SPACE}%{NUMBER:pid}?%{SPACE}?(?<loglevel>[C|c]ritical|CRITICAL[A|a]udit|AUDIT|[D|d]ebug|DEBUG|[N|n]otice|NOTICE|[I|i]nfo|INFO|[W|w]arn?(?:ing)?|WARN?(?:ING)?|[E|e]rr?(?:or)?|ERR?(?:OR)?|[C|c]rit?(?:ical)?|CRIT?(?:ICAL)?|[F|f]atal|FATAL|[S|s]evere|SEVERE) \[?\b%{NOTSPACE:module}\b\]?%{SPACE}?%{GREEDYDATA:logmessage}?\" }" >> $CFILE
+echo "      add_field => { \"received_at\" => \"%{@timestamp}\" }" >> $CFILE
+echo "    }" >> $CFILE
+echo "" >> $CFILE
+
+echo "  # Report on syslog" >> $CFILE
+echo "  } else if [type] == \"syslog\" {" >> $CFILE
+echo "     grok {" >> $CFILE
+echo "        match => { \"message\" => \"%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?: %{GREEDYDATA:logmessage}\" }" >> $CFILE
+echo "        add_field => [ \"received_at\", \"%{@timestamp}\" ]" >> $CFILE
+echo "     }" >> $CFILE
+echo "" >> $CFILE
+echo "     syslog_pri {" >> $CFILE
+echo "        severity_labels => [\"ERROR\", \"ERROR\", \"ERROR\", \"ERROR\", \"WARNING\", \"INFO\", \"INFO\", \"DEBUG\" ]" >> $CFILE
+echo "     }" >> $CFILE
+echo "" >> $CFILE
+
+echo "     date {" >> $CFILE
+echo "        match => [ \"syslog_timestamp\", \"MMM  d HH:mm:ss\", \"MMM dd HH:mm:ss\" ]" >> $CFILE
+echo "     }" >> $CFILE
+echo "" >> $CFILE
+
+echo "     if !(\"_grokparsefailure\" in [tags]) {" >> $CFILE
+echo "        mutate {" >> $CFILE
+echo "           replace => [ \"@source_host\", \"%{syslog_hostname}\" ]" >> $CFILE
+echo "        }" >> $CFILE
+echo "     }" >> $CFILE
+echo "" >> $CFILE
+
+echo "     mutate {" >> $CFILE
+echo "        remove_field => [ \"syslog_hostname\", \"syslog_timestamp\" ]" >> $CFILE
+echo "        add_field => [ \"loglevel\", \"%{syslog_severity}\" ]" >> $CFILE
+echo "        add_field => [ \"module\", \"%{syslog_program}\" ]" >> $CFILE
+echo "     }" >> $CFILE
+echo "" >> $CFILE
+echo "  }" >> $CFILE
+echo "" >> $CFILE
+
+echo "  # Filter out syslog" >> $CFILE
+if [ x$REPORTSYSLOG != xTrue ]; then
+   echo "  if [type] == \"syslog\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+echo "  # Filter out HTTP 200" >> $CFILE
+if [ x$REPORTHTTP200 != xTrue ]; then
+   echo "  if [type] == \"controller-httpd\" {" >> $CFILE
+   echo "    grok {" >> $CFILE
+   echo "      match => [ \"message\", \"%{COMBINEDAPACHELOG}\" ]" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [response] == \"200\" {" >> $CFILE
+   echo "      drop {}" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+echo "  # Filter out error free swift events" >> $CFILE
+if [ x$REPORTALLSWIFT != xTrue ]; then
+   echo "  if [type] == \"storage-swift\"  {" >> $CFILE
+   echo "    if [message] =~ \"Replication run OVER\" {" >> $CFILE
+   echo "      if [message] =~ \"0 failures\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "      }" >> $CFILE
+   echo "      if [message] =~ \"Total errors: 0\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "      }" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"Begin object update sweep\" {" >> $CFILE
+   echo "      if [message] =~ \"0 failures\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "      }" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"object-replicator: Starting object replication pass\" {" >> $CFILE
+   echo "      drop {}" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"Begin container audit pass\" {" >> $CFILE
+   echo "      drop {}" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"Begin object audit\" {" >> $CFILE
+   echo "      if [message] =~ \"Total errors: 0\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "      }" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"Begin container update sweep\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "    if [message] =~ \"object-auditor\" {" >> $CFILE
+   echo "      if [message] =~ \"Total errors: 0\" {" >> $CFILE
+   echo "        drop {}" >> $CFILE
+   echo "      }" >> $CFILE
+   echo "    }" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+echo "  # Filter out the log-levels" >> $CFILE
+chkval=`echo $REPORTVALUES | grep CRITICAL | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"CRITICAL\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+chkval=`echo $REPORTVALUES | grep DEBUG | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"DEBUG\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+chkval=`echo $REPORTVALUES | grep INFO | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"INFO\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+chkval=`echo $REPORTVALUES | grep TRACE | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"TRACE\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+chkval=`echo $REPORTVALUES | grep WARNING | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"WARNING\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+chkval=`echo $REPORTVALUES | grep ERROR | awk -F: '{print $1}'`
+if [ x$chkval == x ]; then
+   echo "  if [loglevel] == \"ERROR\" {" >> $CFILE
+   echo "    drop {}" >> $CFILE
+   echo "  }" >> $CFILE
+   echo "" >> $CFILE
+fi
+
+echo "}" >> $CFILE
+echo "" >> $CFILE
+
+# +------------------------------------------+
+# | RESTART SERVICES                         |
+# +------------------------------------------+
+systemctl restart logstash
+chkconfig logstash on
+

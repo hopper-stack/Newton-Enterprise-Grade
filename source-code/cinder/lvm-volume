@@ -1,0 +1,75 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper-Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f lvm-profile ]; then
+   echo
+   echo " +-----------------------------------------------+"
+   echo " |  No lvm-profile file found in this directory  |"
+   echo " +-----------------------------------------------+"
+   echo
+   exit
+else
+   source lvm-profile
+fi
+
+cd $installdir
+source profile
+
+if [ x$ENABLE_LVM == xTrue ]; then
+   CINDER_DISK=`echo $CINDER_DISK | awk -F: '{print $2}'`
+   arr=$(echo $CINDER_DISK | tr "," "\n")
+   for i in $arr
+   do
+      echo "$i"
+      echo "d" > /tmp/yes
+      echo "w" >> /tmp/yes
+      fdisk $i < /tmp/yes
+      rm -f /tmp/yes
+      echo y > /tmp/yes
+      pvcreate $i < /tmp/yes
+      rm -f /tmp/yes
+      totaldisks=$totaldisks" "$i
+   done
+
+   echo $totaldisks
+   vgcreate cinder-volumes $totaldisks
+
+   filstr="filter = [ "
+   declare -a arr1=(`pvdisplay | grep "PV Name" | awk '{print $3}' | sed 's/[0-9]*//g'| cut -f3 -d/`)
+   for i in ${arr1[@]}; do
+      newstr="\"a/$i/\", "
+      filstr=$filstr${newstr}
+   done
+
+   newstr="\"r/.*/\"]"
+   filstr=$filstr${newstr}
+   echo $filstr
+   sed -i "/^devices {/a ${filstr}" /etc/lvm/lvm.conf
+
+   service openstack-cinder-volume restart
+   systemctl enable openstack-cinder-volume.service target.service
+   systemctl restart openstack-cinder-volume.service target.service
+fi
+
+echo "End lvm-volume"
+

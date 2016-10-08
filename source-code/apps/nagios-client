@@ -1,0 +1,121 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+if [ ! -f profile ]; then
+   echo
+   echo " +-------------------------------------------+"
+   echo " |  No profile file found in this directory  |"
+   echo " +-------------------------------------------+"
+   echo
+   exit
+else
+   source profile
+fi
+
+# +------------------------------------------+
+# | CONTROLLER                               |
+# +------------------------------------------+
+if [ x${NODETYPE} == xapi ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   crudini --set $CFILE "" command[mysql-status] \
+   "/usr/lib64/nagios/plugins/check_mysql -u haproxy_check"
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+
+# +------------------------------------------+
+# | COMPUTE                                  |
+# +------------------------------------------+
+if [ x${NODETYPE} == xnova ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   crudini --set $CFILE "" command[check_nova-compute] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a nova-compute"
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+
+# +------------------------------------------+
+# | HAPROXY                                  |
+# +------------------------------------------+
+if [ x${NODETYPE} == xhaproxy ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   crudini --set $CFILE "" command[check_haproxy] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a haproxy"
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+
+# +------------------------------------------+
+# | NEUTRON                                  |
+# +------------------------------------------+
+if [ x${NODETYPE} == xneutron ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   crudini --set $CFILE "" command[check_ovs] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a neutron-openvswitch-agent"
+   crudini --set $CFILE "" command[check_l3] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a neutron-l3-agent"
+   crudini --set $CFILE "" command[check_dhcp] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a neutron-dhcp-agent"
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+
+# +------------------------------------------+
+# | STORAGE                                  |
+# +------------------------------------------+
+if [ x${NODETYPE} == xstorage ]; then
+   ipaddr=`hostname -I | awk '{print $1}'`
+   CFILE=/etc/nagios/nrpe.cfg
+   crudini --set $CFILE "" allowed_hosts 127.0.0.1,$ipaddr,${NAGIOSSERVER}
+   crudini --set $CFILE "" command[check_root] \
+   "/usr/lib64/nagios/plugins/check_disk -w 20% -c 10% -p /dev/mapper/centos-root"
+   crudini --set $CFILE "" command[check_swift-account] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a swift-account-server"
+   crudini --set $CFILE "" command[check_swift-container] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a swift-container-server"
+   crudini --set $CFILE "" command[check_swift-object] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a swift-object-server"
+   crudini --set $CFILE "" command[check_glance-registry] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a glance-registry"
+   crudini --set $CFILE "" command[check_glance-api] \
+   "/usr/lib64/nagios/plugins/check_procs -c 1: -a glance-api"
+   systemctl enable nrpe
+   systemctl restart nrpe
+fi
+

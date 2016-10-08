@@ -1,0 +1,281 @@
+#!/bin/bash
+
+:<<'hopper-stack-notice'
+
+Copyright 2016 Hopper~Stack
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+hopper-stack-notice
+
+# +------------------------------------------+
+# | VARIABLES                                |
+# +------------------------------------------+
+export TERM=vt100
+if [ ! -f ldap-server-profile ]; then
+   echo
+   echo " +------------------------------------------------------+"
+   echo " |  no ldap-server-profile file not in this directory   |"
+   echo " +------------------------------------------------------+"
+   echo
+   exit
+else
+   source ldap-server-profile
+fi
+
+if [ x$ENABLE_ETCHOSTS == xTrue ]; then
+   check=`cat /etc/hosts | grep Hopper-Stack | awk '{print $1}'`
+   if [ x$check == x ]; then
+      cat hosts-file >> /etc/hosts
+   fi
+fi
+
+cd $installdir
+
+if [[ ! -f profile || ! -f /etc/yum.repos.d/hopper-repo.repo ]]; then
+   ./patch-client
+fi
+
+# NTP
+yum install -y chrony
+systemctl enable chronyd.service
+if [ x$NTPSERVER != xNone ]; then
+   sed -i "s/^server/# server/g" /etc/chrony.conf
+   echo "server $NTPSERVER iburst" >> /etc/chrony.conf
+   systemctl enable chronyd.service
+   systemctl restart chronyd.service
+   chronyc sources
+   ntpdate -u $NTPSERVER
+fi
+
+yum -y install openldap-servers openldap-clients openldap migrationtools
+yum -y install openldap-clients nss-pam-ldapd
+cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG
+
+chown ldap. /var/lib/ldap/DB_CONFIG
+
+systemctl start slapd
+systemctl enable slapd 
+
+ROOTPW=$LDAP_PASS
+
+mkdir /tmp/ldifs
+cd /tmp/ldifs
+
+# +------------------------------------------+
+# | PARAMETERS                               |
+# +------------------------------------------+
+echo $DNSDOMAIN
+ORG=""; BASEDN=""
+
+arr1=$(echo $DNSDOMAIN | tr "." "\n")
+
+for i in ${arr1[@]}; do
+   BASEDN="${BASEDN}dc=$i,"
+   ORG="${ORG} $i"
+done
+echo "o: $ORG"
+BASEDN=`echo "${BASEDN%?}"`
+echo $BASEDN
+FIRSTVAL=`echo $ORG | awk '{print $1}'`
+
+echo "dn: olcDatabase={0}config,cn=config" > chrootpw.ldif
+echo "changetype: modify" >> chrootpw.ldif
+echo "add: olcRootPW" >> chrootpw.ldif
+echo "olcRootPW: $ROOTPW" >> chrootpw.ldif
+
+ldapadd -Y EXTERNAL -H ldapi:/// -f chrootpw.ldif 
+
+ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif 
+ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif 
+ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif 
+
+DIRPW=$LDAP_PASS
+
+echo "dn: olcDatabase={1}monitor,cn=config" > chdomain.ldif
+echo "changetype: modify" >> chdomain.ldif
+echo "replace: olcAccess" >> chdomain.ldif
+echo "olcAccess: to dn.subtree=\"ou=people,$BASEDN\"" >> chdomain.ldif
+echo "  attrs=userPassword" >> chdomain.ldif
+echo "  by self write" >> chdomain.ldif
+echo "  by * break" >> chdomain.ldif
+echo "" >> chdomain.ldif
+
+echo "dn: olcDatabase={2}hdb,cn=config" >> chdomain.ldif
+echo "changetype: modify" >> chdomain.ldif
+echo "replace: olcSuffix" >> chdomain.ldif
+echo "olcSuffix: $BASEDN" >> chdomain.ldif
+echo "" >> chdomain.ldif
+echo "dn: olcDatabase={2}hdb,cn=config" >> chdomain.ldif
+echo "changetype: modify" >> chdomain.ldif
+echo "replace: olcRootDN" >> chdomain.ldif
+echo "olcRootDN: cn=Manager,$BASEDN" >> chdomain.ldif
+echo "" >> chdomain.ldif
+echo "dn: olcDatabase={2}hdb,cn=config" >> chdomain.ldif
+echo "changetype: modify" >> chdomain.ldif
+echo "add: olcRootPW" >> chdomain.ldif
+echo "olcRootPW: $DIRPW" >> chdomain.ldif
+echo "" >> chdomain.ldif
+
+ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif 
+
+# +------------------------------------------+
+# | BASEDOMAIN                               |
+# +------------------------------------------+
+echo "dn: $BASEDN" > basedomain.ldif 
+echo "objectClass: top" >> basedomain.ldif 
+echo "objectClass: dcObject" >> basedomain.ldif 
+echo "objectclass: organization" >> basedomain.ldif 
+
+echo "o: $ORG" >> basedomain.ldif 
+echo "dc: $FIRSTVAL" >> basedomain.ldif 
+echo "" >> basedomain.ldif 
+
+echo "dn: cn=Manager,$BASEDN" >> basedomain.ldif 
+echo "objectClass: organizationalRole" >> basedomain.ldif 
+echo "cn: Manager" >> basedomain.ldif 
+echo "description: Directory Manager" >> basedomain.ldif 
+echo "" >> basedomain.ldif 
+
+echo "dn: ou=People,$BASEDN" >> basedomain.ldif 
+echo "objectClass: organizationalUnit" >> basedomain.ldif 
+echo "ou: People" >> basedomain.ldif 
+
+echo "" >> basedomain.ldif 
+echo "dn: ou=Group,$BASEDN" >> basedomain.ldif 
+echo "objectClass: organizationalUnit" >> basedomain.ldif 
+echo "ou: Group" >> basedomain.ldif 
+echo "" >> basedomain.ldif 
+
+ldapadd -x -D cn=Manager,$BASEDN -w $LDAP_PASS -f basedomain.ldif
+
+# +------------------------------------------+
+# | ADD ACCOUT                               |
+# +------------------------------------------+
+TESTPW=$LDAP_PASS
+
+echo "dn: uid=hopperstackadm,ou=People,$BASEDN" > ldapuser.ldif 
+echo "objectClass: inetOrgPerson" >> ldapuser.ldif 
+echo "objectClass: posixAccount" >> ldapuser.ldif 
+echo "objectClass: shadowAccount" >> ldapuser.ldif 
+echo "cn: hopperstackadm" >> ldapuser.ldif 
+echo "sn: Linux" >> ldapuser.ldif 
+echo "userPassword: $TESTPW" >> ldapuser.ldif 
+echo "loginShell: /bin/bash" >> ldapuser.ldif 
+echo "uidNumber: 1001" >> ldapuser.ldif 
+echo "gidNumber: 1001" >> ldapuser.ldif 
+echo "homeDirectory: /home/hopperstackadm" >> ldapuser.ldif 
+echo "" >> ldapuser.ldif 
+echo "dn: cn=hopperstackadm,ou=Group,$BASEDN" >> ldapuser.ldif 
+echo "objectClass: posixGroup" >> ldapuser.ldif 
+echo "cn: hopperstackadm" >> ldapuser.ldif 
+echo "gidNumber: 1001" >> ldapuser.ldif 
+echo "memberUid: hopperstackadm" >> ldapuser.ldif 
+
+ldapadd -x -D cn=Manager,$BASEDN -w $LDAP_PASS -f ldapuser.ldif 
+
+# +------------------------------------------+
+# | LDAPSEARCH                               |
+# +------------------------------------------+
+ldapsearch -x cn=hopperstackadm -b $BASEDN
+
+# +------------------------------------------+
+# | FIREWALL                                 |
+# +------------------------------------------+
+firewall-cmd --permanent --add-service=ldap
+firewall-cmd --reload
+
+# +------------------------------------------+
+# | INSTALLTION                              |
+# +------------------------------------------+
+authconfig --enableldap \
+--enableldapauth \
+--ldapserver=$LDAPSERVER \
+--ldapbasedn=$BASEDN \
+--enablemkhomedir \
+--update
+
+# +------------------------------------------+
+# | TLS / SSL                                |
+# +------------------------------------------+
+cd /etc/pki/tls/certs
+openssl genrsa -out server.key 2048
+
+# +------------------------------------------+
+# | CETTIFICATE                              |
+# +------------------------------------------+
+echo "UK" > /tmp/yes
+echo "OpenStack" >> /tmp/yes
+echo "Stack" >> /tmp/yes
+echo "Opensource" >> /tmp/yes
+echo "Hopper-Stack" >> /tmp/yes
+echo `hostname` >> /tmp/yes
+echo >> /tmp/yes; echo >> /tmp/yes; echo >> /tmp/yes
+make server.csr < /tmp/yes
+rm -rf /tmp/yes
+
+openssl x509 -in server.csr -out server.crt -req -signkey server.key -days 36500
+
+cp /etc/pki/tls/certs/server.key \
+/etc/pki/tls/certs/server.crt \
+/etc/pki/tls/certs/ca-bundle.crt \
+/etc/openldap/certs/ 
+
+chown ldap. /etc/openldap/certs/server.key \
+/etc/openldap/certs/server.crt \
+/etc/openldap/certs/ca-bundle.crt 
+
+# +------------------------------------------+
+# | SSL                                      |
+# +------------------------------------------+
+echo "dn: cn=config" > mod_ssl.ldif 
+echo "changetype: modify" >> mod_ssl.ldif 
+echo "add: olcTLSCACertificateFile" >> mod_ssl.ldif 
+echo "olcTLSCACertificateFile: /etc/openldap/certs/ca-bundle.crt" >> mod_ssl.ldif 
+echo "-" >> mod_ssl.ldif 
+echo "replace: olcTLSCertificateFile" >> mod_ssl.ldif 
+echo "olcTLSCertificateFile: /etc/openldap/certs/server.crt" >> mod_ssl.ldif 
+echo "-" >> mod_ssl.ldif 
+echo "replace: olcTLSCertificateKeyFile" >> mod_ssl.ldif 
+echo "olcTLSCertificateKeyFile: /etc/openldap/certs/server.key" >> mod_ssl.ldif 
+
+ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_ssl.ldif 
+
+# +------------------------------------------+
+# | SLAPD                                    |
+# +------------------------------------------+
+sed -i 's/SLAPD_URLS=/#SLAPD_URLS=/' /etc/sysconfig/slapd
+echo "SLAPD_URLS=\"ldapi:/// ldap:/// ldaps:///\" " >> /etc/sysconfig/slapd
+
+systemctl restart slapd 
+
+# +------------------------------------------+
+# | CLIENT                                   |
+# +------------------------------------------+
+echo "TLS_REQCERT allow" >> /etc/openldap/ldap.conf 
+echo "tls_reqcert allow" >> /etc/nslcd.conf 
+
+authconfig --enableldap \
+--enableldapauth \
+--ldapserver=$LDAPSERVER \
+--ldapbasedn=$BASEDN \
+--enablemkhomedir \
+--update
+
+systemctl restart nslcd 
+
+# +------------------------------------------+
+# | LDAPSEARCH                               |
+# +------------------------------------------+
+ldapsearch -x -b $BASEDN -H ldap://$LDAPSERVER -D cn=Manager,$BASEDN  -w $LDAP_PASS -v -ZZ
+
